@@ -23,7 +23,7 @@ getrandom = "0.3"
 hmac = "0.12"
 sha2 = "0.10"
 uuid = { version = "1", features = ["v4"] }
-toml = "0.8"
+toml = "1.1"
 uzers = "0.11"
 listenfd = "1.0"
 arc-swap = "1.7.1"
