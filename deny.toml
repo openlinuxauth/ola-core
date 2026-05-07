@@ -1,0 +1,37 @@
+# deny.toml — strict configuration for cargo-deny 0.18.9
+
+[graph]
+targets = []
+all-features = true
+
+[output]
+feature-depth = 1
+
+[advisories]
+db-urls = ["https://github.com/rustsec/advisory-db"]
+# By default, cargo-deny 0.18+ denies vulnerabilities.
+
+[licenses]
+# Standard open source licenses are allowed. Everything else is denied by default.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-3-Clause",
+    "Unicode-3.0",
+]
+confidence-threshold = 0.8
+
+[bans]
+multiple-versions = "warn"
+wildcards = "warn"
+highlight = "all"
+allow = []
+deny = []
+skip = []
+skip-tree = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

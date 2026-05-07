@@ -1,0 +1,20 @@
+[package]
+name = "pam-ola"
+version = "0.1.0"
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Experimental Linux-PAM bridge for OLA (Open Linux Authentication)."
+repository.workspace = true
+
+[lib]
+name = "pam_ola"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+libc = "0.2"
+serde_json = "1.0"
+
+[dev-dependencies]
+tempfile = "=3.23.0"

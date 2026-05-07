@@ -1,0 +1,13 @@
+/var/log/ola/audit.log {
+    daily
+    rotate 30
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0640 ola ola
+    sharedscripts
+    postrotate
+        systemctl kill -s HUP ola.service >/dev/null 2>&1 || true
+    endscript
+}

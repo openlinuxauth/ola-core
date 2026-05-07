@@ -1,0 +1,21 @@
+[workspace]
+members = [
+    "crates/ola-core",
+    "crates/pam-ola",
+    "crates/ola-adapter-demo-fido2",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+authors = ["Junaid Swati <openlinuxauth@gmail.com>"]
+license = "Apache-2.0"
+rust-version = "1.95.0"
+repository = "https://github.com/openlinuxauth/ola-core"
+
+[profile.dev]
+opt-level = 0
+debug = 1
+split-debuginfo = "unpacked"
+codegen-units = 256
+incremental = true

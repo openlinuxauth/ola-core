@@ -1,0 +1,13 @@
+[Unit]
+Description=OLA Authentication Socket
+
+[Socket]
+ListenStream=/run/ola/ola.sock
+DirectoryMode=0750
+SocketMode=0660
+SocketUser=ola
+SocketGroup=ola
+Accept=false
+
+[Install]
+WantedBy=sockets.target

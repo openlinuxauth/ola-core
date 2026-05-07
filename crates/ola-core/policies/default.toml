@@ -1,0 +1,4 @@
+[[rules]]
+min_confidence = 0.9
+max_age_secs = 30
+require_uid_match = true

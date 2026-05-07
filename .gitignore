@@ -1,0 +1,56 @@
+# Rust build artifacts
+target/
+**/target/
+
+
+# Editor/IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Keys and runtime sockets
+/tmp/ola.sock
+/run/ola/*.sock
+*.key
+*.sock
+
+# Logs
+*.log
+/tmp/*.log
+
+# Review/Verification documents (local only)
+COMPLETE_PUBLICATION_REVIEW.md
+FILES_TO_PUBLISH.md
+GITHUB_PUBLICATION_GUIDE.md
+PUBLICATION_STRATEGY.md
+VERIFICATION_REPORT.md
+FINAL_PREFLIGHT.sh
+SELF_VERIFY.sh
+verify_all.sh
+preflight_report.txt
+PRE_FLIGHT_CHECK.sh
+
+# Internal planning documents (local only)
+OUTREACH_TEMPLATES.md
+POST_LAUNCH_CHECKLIST.md
+FINAL_STATUS.md
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Test artifacts
+/tmp/ola-core.pid
+
+# Private snapshots and local notes.
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+.notes/
