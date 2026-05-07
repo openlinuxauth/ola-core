@@ -257,10 +257,12 @@ async fn test_rate_limit_applies_to_reused_connection() {
             "{}\n",
             serde_json::to_string(&req).expect("serialize request")
         );
-        stream
-            .write_all(line.as_bytes())
-            .await
-            .expect("write request");
+        if let Err(e) = stream.write_all(line.as_bytes()).await {
+            if e.kind() == std::io::ErrorKind::BrokenPipe {
+                break;
+            }
+            panic!("write request: {e}");
+        }
     }
 
     let mut buf = Vec::new();
