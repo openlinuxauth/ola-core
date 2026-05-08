@@ -10,12 +10,40 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UnixStream;
 
+fn wildcard_policy(min_confidence: f32) -> String {
+    policy_rule(None, min_confidence)
+}
+
+fn method_policy(method: &str, min_confidence: f32) -> String {
+    policy_rule(Some(method), min_confidence)
+}
+
+fn policy_rule(method: Option<&str>, min_confidence: f32) -> String {
+    let mut toml = String::from("[[rules]]\n");
+    if let Some(method) = method {
+        toml.push_str(&format!("method = \"{method}\"\n"));
+    }
+    toml.push_str(&format!(
+        "min_confidence = {min_confidence:.1}\nmax_age_secs = 30\nrequire_uid_match = true\n"
+    ));
+    toml
+}
+
+async fn start_without_adapter(policy: String) -> TestServer {
+    TestServer::start_without_adapter(&policy).await
+}
+
+async fn start_with_adapter(
+    policy: String,
+    behavior: MockAdapterBehavior,
+    method_name: &str,
+) -> TestServer {
+    TestServer::start_with_adapter(&policy, behavior, method_name).await
+}
+
 #[tokio::test]
 async fn test_ping() {
-    let server = TestServer::start_without_adapter(
-        "[[rules]]\nmin_confidence = 0.0\nmax_age_secs = 30\nrequire_uid_match = true\n",
-    )
-    .await;
+    let server = start_without_adapter(wildcard_policy(0.0)).await;
 
     let response = server.send_request("ping-1", "ping", json!({})).await;
     assert_eq!(response["version"], PROTOCOL_VERSION);
@@ -26,10 +54,7 @@ async fn test_ping() {
 
 #[tokio::test]
 async fn test_status() {
-    let server = TestServer::start_without_adapter(
-        "[[rules]]\nmin_confidence = 0.0\nmax_age_secs = 30\nrequire_uid_match = true\n",
-    )
-    .await;
+    let server = start_without_adapter(wildcard_policy(0.0)).await;
 
     let response = server.send_request("status-1", "status", json!({})).await;
     assert_eq!(response["result"]["status"], "running");
@@ -38,10 +63,7 @@ async fn test_status() {
 
 #[tokio::test]
 async fn test_list_methods_empty() {
-    let server = TestServer::start_without_adapter(
-        "[[rules]]\nmin_confidence = 0.0\nmax_age_secs = 30\nrequire_uid_match = true\n",
-    )
-    .await;
+    let server = start_without_adapter(wildcard_policy(0.0)).await;
 
     let response = server
         .send_request("methods-1", "list_methods", json!({}))
@@ -53,10 +75,7 @@ async fn test_list_methods_empty() {
 
 #[tokio::test]
 async fn test_invalid_json() {
-    let server = TestServer::start_without_adapter(
-        "[[rules]]\nmin_confidence = 0.0\nmax_age_secs = 30\nrequire_uid_match = true\n",
-    )
-    .await;
+    let server = start_without_adapter(wildcard_policy(0.0)).await;
     let mut stream = UnixStream::connect(&server.socket_path)
         .await
         .expect("connect");
@@ -79,10 +98,7 @@ async fn test_invalid_json() {
 
 #[tokio::test]
 async fn test_sighup_reload_survives_seccomp() {
-    let server = TestServer::start_without_adapter(
-        "[[rules]]\nmin_confidence = 0.0\nmax_age_secs = 30\nrequire_uid_match = true\n",
-    )
-    .await;
+    let server = start_without_adapter(wildcard_policy(0.0)).await;
 
     // SAFETY: server.pid() is the child process spawned by this test.
     let ret = unsafe { libc::kill(server.pid() as i32, libc::SIGHUP) };
@@ -97,10 +113,7 @@ async fn test_sighup_reload_survives_seccomp() {
 
 #[tokio::test]
 async fn test_verify_once_rejects_invalid_method_type() {
-    let server = TestServer::start_without_adapter(
-        "[[rules]]\nmin_confidence = 0.0\nmax_age_secs = 30\nrequire_uid_match = true\n",
-    )
-    .await;
+    let server = start_without_adapter(wildcard_policy(0.0)).await;
 
     let response = server
         .send_request("bad-method", "verify_once", json!({"method": null}))
@@ -114,8 +127,8 @@ async fn test_verify_once_rejects_invalid_method_type() {
 
 #[tokio::test]
 async fn test_sighup_policy_reload_takes_effect() {
-    let server = TestServer::start_with_adapter(
-        "[[rules]]\nmethod = \"fido2\"\nmin_confidence = 0.9\nmax_age_secs = 30\nrequire_uid_match = true\n",
+    let server = start_with_adapter(
+        method_policy("fido2", 0.9),
         MockAdapterBehavior::allow("fido2").with_confidence(0.5),
         "fido2",
     )
@@ -126,11 +139,7 @@ async fn test_sighup_policy_reload_takes_effect() {
         .await;
     assert_eq!(denied["result"]["decision"], "deny");
 
-    std::fs::write(
-        server.policy_path(),
-        "[[rules]]\nmethod = \"fido2\"\nmin_confidence = 0.4\nmax_age_secs = 30\nrequire_uid_match = true\n",
-    )
-    .expect("rewrite policy");
+    std::fs::write(server.policy_path(), method_policy("fido2", 0.4)).expect("rewrite policy");
     // SAFETY: server.pid() is the child process spawned by this test.
     let ret = unsafe { libc::kill(server.pid() as i32, libc::SIGHUP) };
     assert_eq!(ret, 0, "send SIGHUP");
@@ -144,10 +153,7 @@ async fn test_sighup_policy_reload_takes_effect() {
 
 #[tokio::test]
 async fn test_unknown_method() {
-    let server = TestServer::start_without_adapter(
-        "[[rules]]\nmin_confidence = 0.0\nmax_age_secs = 30\nrequire_uid_match = true\n",
-    )
-    .await;
+    let server = start_without_adapter(wildcard_policy(0.0)).await;
 
     let response = server
         .send_request("unknown-1", "nonexistent_method", json!({}))
@@ -161,10 +167,7 @@ async fn test_unknown_method() {
 
 #[tokio::test]
 async fn test_oversized_payload() {
-    let server = TestServer::start_without_adapter(
-        "[[rules]]\nmin_confidence = 0.0\nmax_age_secs = 30\nrequire_uid_match = true\n",
-    )
-    .await;
+    let server = start_without_adapter(wildcard_policy(0.0)).await;
     let huge_string = "a".repeat(600 * 1024);
 
     let mut stream = UnixStream::connect(&server.socket_path)
@@ -209,10 +212,7 @@ async fn test_oversized_payload() {
 
 #[tokio::test]
 async fn test_idle_connections_release_connection_permits() {
-    let server = TestServer::start_without_adapter(
-        "[[rules]]\nmin_confidence = 0.0\nmax_age_secs = 30\nrequire_uid_match = true\n",
-    )
-    .await;
+    let server = start_without_adapter(wildcard_policy(0.0)).await;
 
     let mut idle_connections = Vec::new();
     for _ in 0..16 {
@@ -238,10 +238,7 @@ async fn test_idle_connections_release_connection_permits() {
 
 #[tokio::test]
 async fn test_rate_limit_applies_to_reused_connection() {
-    let server = TestServer::start_without_adapter(
-        "[[rules]]\nmin_confidence = 0.0\nmax_age_secs = 30\nrequire_uid_match = true\n",
-    )
-    .await;
+    let server = start_without_adapter(wildcard_policy(0.0)).await;
     let mut stream = UnixStream::connect(&server.socket_path)
         .await
         .expect("connect");
@@ -290,10 +287,7 @@ async fn test_rate_limit_applies_to_reused_connection() {
 
 #[tokio::test]
 async fn test_verify_once_no_adapters_denied() {
-    let server = TestServer::start_without_adapter(
-        "[[rules]]\nmin_confidence = 0.0\nmax_age_secs = 30\nrequire_uid_match = true\n",
-    )
-    .await;
+    let server = start_without_adapter(wildcard_policy(0.0)).await;
 
     let response = server
         .send_request("verify-none", "verify_once", json!({"method": "fido2"}))
@@ -307,8 +301,8 @@ async fn test_verify_once_no_adapters_denied() {
 
 #[tokio::test]
 async fn test_verify_once_mock_adapter_allow() {
-    let server = TestServer::start_with_adapter(
-        "[[rules]]\nmethod = \"fido2\"\nmin_confidence = 1.0\nmax_age_secs = 30\nrequire_uid_match = true\n",
+    let server = start_with_adapter(
+        method_policy("fido2", 1.0),
         MockAdapterBehavior::allow("fido2"),
         "fido2",
     )
@@ -332,8 +326,8 @@ async fn test_verify_once_mock_adapter_allow() {
 
 #[tokio::test]
 async fn test_nonce_replay_denied() {
-    let server = TestServer::start_with_adapter(
-        "[[rules]]\nmethod = \"fido2\"\nmin_confidence = 1.0\nmax_age_secs = 30\nrequire_uid_match = true\n",
+    let server = start_with_adapter(
+        method_policy("fido2", 1.0),
         MockAdapterBehavior::allow("fido2").with_replay_first_response(),
         "fido2",
     )
@@ -356,8 +350,8 @@ async fn test_nonce_replay_denied() {
 
 #[tokio::test]
 async fn test_nonce_mismatch_denied() {
-    let server = TestServer::start_with_adapter(
-        "[[rules]]\nmethod = \"fido2\"\nmin_confidence = 1.0\nmax_age_secs = 30\nrequire_uid_match = true\n",
+    let server = start_with_adapter(
+        method_policy("fido2", 1.0),
         MockAdapterBehavior::allow("fido2").with_tamper_nonce(),
         "fido2",
     )
@@ -383,8 +377,8 @@ async fn test_nonce_mismatch_denied() {
 
 #[tokio::test]
 async fn test_invalid_evidence_hash_denied() {
-    let server = TestServer::start_with_adapter(
-        "[[rules]]\nmethod = \"fido2\"\nmin_confidence = 1.0\nmax_age_secs = 30\nrequire_uid_match = true\n",
+    let server = start_with_adapter(
+        method_policy("fido2", 1.0),
         MockAdapterBehavior::allow("fido2").with_tamper_hash(),
         "fido2",
     )
@@ -410,8 +404,8 @@ async fn test_invalid_evidence_hash_denied() {
 
 #[tokio::test]
 async fn test_method_mismatch_denied() {
-    let server = TestServer::start_with_adapter(
-        "[[rules]]\nmin_confidence = 1.0\nmax_age_secs = 30\nrequire_uid_match = true\n",
+    let server = start_with_adapter(
+        wildcard_policy(1.0),
         MockAdapterBehavior::allow("fido2").with_result_method("pin"),
         "fido2",
     )
@@ -429,8 +423,8 @@ async fn test_method_mismatch_denied() {
 
 #[tokio::test]
 async fn test_low_confidence_denied() {
-    let server = TestServer::start_with_adapter(
-        "[[rules]]\nmethod = \"fido2\"\nmin_confidence = 0.9\nmax_age_secs = 30\nrequire_uid_match = true\n",
+    let server = start_with_adapter(
+        method_policy("fido2", 0.9),
         MockAdapterBehavior::allow("fido2").with_confidence(0.4),
         "fido2",
     )
@@ -448,8 +442,8 @@ async fn test_low_confidence_denied() {
 
 #[tokio::test]
 async fn test_adapter_queue_times_out_when_adapter_is_busy() {
-    let server = TestServer::start_with_adapter(
-        "[[rules]]\nmethod = \"fido2\"\nmin_confidence = 1.0\nmax_age_secs = 30\nrequire_uid_match = true\n",
+    let server = start_with_adapter(
+        method_policy("fido2", 1.0),
         MockAdapterBehavior::allow("fido2").with_response_delay_ms(1000),
         "fido2",
     )
