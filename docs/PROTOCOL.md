@@ -246,9 +246,15 @@ For those entries, `confidence` is `0.0`, and the evidence hash and nonce prefix
 
 The daemon hashes each audit entry before writing it.
 
-To avoid hashing the hash itself, `entry_hash` is empty when the hash is made.
+Audit hashes use `OLA-AUDIT-HASH-V1`.
 
-The fields are hashed in the same order they appear in `AuditEntry`:
+The hash input starts with:
+
+```text
+OLA-AUDIT-HASH-V1
+```
+
+Then these fields are written in order:
 
 ```text
 ts_ms
@@ -264,6 +270,18 @@ evidence_hash
 nonce_prefix
 prev_hash
 ```
+
+Each field line uses:
+
+```text
+field_name:tag:byte_length:value
+```
+
+`tag` is `v` for normal values, `s` for present optional strings, and `n` for absent optional strings.
+
+Strings are UTF-8. `confidence` is the lowercase 8-character hex form of `f32::to_bits()`.
+
+`entry_hash` is not part of the hash input.
 
 `prev_hash` is the previous line's `entry_hash`.
 
