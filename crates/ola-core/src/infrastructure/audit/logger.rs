@@ -65,8 +65,7 @@ impl AuditLogger {
 
             entry.prev_hash = state.prev_hash.clone();
             entry.entry_hash.clear();
-            let payload = serde_json::to_vec(&entry).context("audit serialization failed")?;
-            entry.entry_hash = hex_sha256(&payload);
+            entry.entry_hash = hex_sha256(&entry.hash_payload_v1());
             let line = serde_json::to_string(&entry).context("audit serialization failed")? + "\n";
 
             state
@@ -233,8 +232,11 @@ mod tests {
         let first: serde_json::Value = serde_json::from_str(lines[0]).expect("first json");
         let second: serde_json::Value = serde_json::from_str(lines[1]).expect("second json");
         let first_hash = first["entry_hash"].as_str().expect("first hash");
+        let mut expected_first = entry("one");
+        expected_first.prev_hash = ZERO_HASH.to_string();
 
         assert_eq!(first["prev_hash"], ZERO_HASH);
+        assert_eq!(first_hash, hex_sha256(&expected_first.hash_payload_v1()));
         assert_eq!(second["prev_hash"], first_hash);
         assert!(is_hex_hash(first_hash));
         assert!(is_hex_hash(
