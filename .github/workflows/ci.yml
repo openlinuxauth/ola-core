@@ -39,6 +39,9 @@ jobs:
       - name: Tests
         run: cargo test --workspace --all-features --locked -- --nocapture --test-threads=1
 
+      - name: Python client tests
+        run: python3 -m unittest discover -s clients/python -p 'test_*.py'
+
       - name: Release build
         run: cargo build --workspace --release --locked
 
