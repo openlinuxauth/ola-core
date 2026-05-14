@@ -86,7 +86,8 @@ fi
 echo "--> 6) cargo build --release"
 cargo build --workspace --all-features --release --locked
 
-CARGO_DENY_VERSION="${CARGO_DENY_VERSION:-0.18.9}"  # overrideable env var
+CARGO_DENY_VERSION="${CARGO_DENY_VERSION:-0.18.9}"
+CARGO_AUDIT_VERSION="${CARGO_AUDIT_VERSION:-0.22.1}"
 if command -v cargo >/dev/null 2>&1; then
   INSTALLED_VERSION=""
   if command -v cargo-deny >/dev/null 2>&1; then
@@ -116,15 +117,20 @@ if [ "$RUN_AUDIT" -eq 1 ]; then
     echo "--> cargo-deny not available after install; skipping (set SKIP_CARGO_DENY=1 to ignore)"
   fi
 
+  INSTALLED_AUDIT_VERSION=""
   if command -v cargo-audit >/dev/null 2>&1; then
-    echo "--> 8) cargo-audit"
-    cargo audit
-  else
-    echo "--> Installing cargo-audit"
-    cargo install cargo-audit
-    echo "--> 8) cargo-audit"
-    cargo audit
+    INSTALLED_AUDIT_VERSION=$(cargo-audit --version | awk '{print $2}')
   fi
+
+  if [ "$INSTALLED_AUDIT_VERSION" != "$CARGO_AUDIT_VERSION" ]; then
+    echo "--> Installing cargo-audit v${CARGO_AUDIT_VERSION} (current: ${INSTALLED_AUDIT_VERSION:-none})"
+    cargo install cargo-audit --version "$CARGO_AUDIT_VERSION" --locked --force
+  else
+    echo "--> cargo-audit v$CARGO_AUDIT_VERSION is already installed"
+  fi
+
+  echo "--> 8) cargo-audit"
+  cargo audit
 fi
 
 echo "== All tests passed! =="
