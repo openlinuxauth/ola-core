@@ -12,6 +12,35 @@ PROTOCOL_VERSION = 1
 MAX_RESPONSE_BYTES = 512 * 1024
 
 
+def _client_error(request_id, message):
+    return {"id": request_id, "result": None, "error": message}
+
+
+def _validate_response(response, expected_id):
+    if not isinstance(response, dict):
+        return _client_error(expected_id, "Response must be a JSON object")
+
+    if response.get("version") != PROTOCOL_VERSION:
+        return _client_error(expected_id, "Protocol version mismatch")
+
+    has_result = response.get("result") is not None
+    has_error = response.get("error") is not None
+    if has_result == has_error:
+        return _client_error(expected_id, "Response must contain exactly one of result or error")
+
+    if has_error and not isinstance(response["error"], str):
+        return _client_error(expected_id, "Response error must be a string")
+
+    response_id = response.get("id")
+    if response_id == expected_id:
+        return response
+
+    if response_id is None and has_error:
+        return _client_error(expected_id, response["error"])
+
+    return _client_error(expected_id, "Response id mismatch")
+
+
 def default_timeout():
     raw = os.environ.get("OLA_CLIENT_TIMEOUT", "5.0")
     try:
@@ -46,7 +75,7 @@ class OlaClient:
         try:
             s.connect(self.socket_path)
         except Exception as e:
-            return {"id": req.get("id"), "result": None, "error": f"Connection failed: {str(e)}"}
+            return _client_error(req["id"], f"Connection failed: {str(e)}")
 
         try:
             msg = json.dumps(req) + "\n"
@@ -59,20 +88,24 @@ class OlaClient:
                     break
                 data += chunk
                 if len(data) > MAX_RESPONSE_BYTES:
-                    return {"id": req["id"], "result": None, "error": "Response too large"}
+                    return _client_error(req["id"], "Response too large")
                 if b"\n" in chunk:
                     break
 
             if not data:
-                return {"id": req["id"], "result": None, "error": "Empty response from server"}
+                return _client_error(req["id"], "Empty response from server")
 
             line = data.split(b"\n", 1)[0]
-            return json.loads(line.decode("utf-8"))
+            try:
+                response = json.loads(line.decode("utf-8"))
+            except json.JSONDecodeError as e:
+                return _client_error(req["id"], f"Invalid response JSON: {e}")
+            return _validate_response(response, req["id"])
 
         except socket.timeout:
-            return {"id": req["id"], "result": None, "error": "Request timed out"}
+            return _client_error(req["id"], "Request timed out")
         except Exception as e:
-            return {"id": req["id"], "result": None, "error": f"Client error: {e}"}
+            return _client_error(req["id"], f"Client error: {e}")
         finally:
             s.close()
 

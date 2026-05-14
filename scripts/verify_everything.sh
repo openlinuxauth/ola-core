@@ -75,6 +75,10 @@ rm -f "$tmp_pyc"
 trap - EXIT
 echo
 
+echo "-- python client tests"
+python3 -m unittest discover -s clients/python -p 'test_*.py'
+echo
+
 echo "-- systemd unit verification"
 systemd-analyze verify dist/systemd/ola.service dist/systemd/ola.socket
 echo
