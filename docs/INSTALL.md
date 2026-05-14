@@ -166,6 +166,13 @@ Installed allowlist path:
 /etc/ola/allowlist
 ```
 
+## Socket access
+
+The systemd socket is `/run/ola/ola.sock`, mode `0660`, owned by `ola:ola`.
+
+The current install path is meant for PAM or another privileged or service-mediated caller. The
+allowlist is checked after a process connects; it does not grant Unix socket access by itself.
+
 ## Policy
 
 Installed policy lives at:

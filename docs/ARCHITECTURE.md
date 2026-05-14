@@ -91,6 +91,9 @@ The nonce is consumed before attestation and policy so the same challenge cannot
 failed attempt. Audit happens after policy because the log must record the decision that will be
 returned. If the record cannot be written and synced, no auth decision is returned.
 
+Socket permissions are the first gate. The daemon allowlist is the second gate. A UID in the
+allowlist still cannot connect if Unix socket permissions block the process.
+
 ## Policy shape
 
 Policy is a TOML rule table.
