@@ -242,3 +242,5 @@ Startup is strict.
 - the audit log cannot be opened safely
 
 Bad trust files should fail startup instead of becoming a hidden per-request problem.
+
+On `SIGHUP`, policy and allowlist reload together. A bad edit does not partially apply.

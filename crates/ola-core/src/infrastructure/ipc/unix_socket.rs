@@ -38,41 +38,75 @@ const RATE_LIMIT_PER_UID: u32 = 100;
 
 #[derive(Clone)]
 struct ServerState {
-    // ArcSwap lets SIGHUP replace config state without stopping live requests.
     adapter_registry: Arc<AdapterRegistry>,
-    policy_engine: Arc<ArcSwap<PolicyEngine>>,
+    reloadable: Arc<ArcSwap<ReloadableState>>,
     attester: Arc<AttestationVerifier>,
     nonce_store: Arc<NonceStore>,
     audit_logger: Arc<AuditLogger>,
-    allowlist: Arc<ArcSwap<Allowlist>>,
     rate_limiter: Arc<RateLimiter>,
     config: Arc<Config>,
     owner_policy: OwnerPolicy,
 }
 
+struct ReloadableState {
+    allowlist: Allowlist,
+    policy_engine: PolicyEngine,
+}
+
+impl ReloadableState {
+    fn load(config: &Config, owner_policy: OwnerPolicy) -> anyhow::Result<Self> {
+        // Bad trust material must fail startup. Per-request denial hides operator
+        // mistakes behind auth noise.
+        let mut allowlist = Allowlist::new();
+        if config.is_prod_mode() {
+            allowlist
+                .load_from_file_with_options(&config.allowlist_path, true, owner_policy)
+                .with_context(|| {
+                    format!(
+                        "Failed to load allowlist from {} in production mode",
+                        config.allowlist_path.display()
+                    )
+                })?;
+        } else {
+            let _ =
+                allowlist.load_from_file_with_options(&config.allowlist_path, false, owner_policy);
+        }
+
+        let policy_engine = PolicyEngine::from_config_with_owner(
+            &config.policy_path,
+            config.max_result_age_secs,
+            owner_policy,
+        )?;
+
+        Ok(Self {
+            allowlist,
+            policy_engine,
+        })
+    }
+
+    fn reload(config: &Config, owner_policy: OwnerPolicy) -> anyhow::Result<Self> {
+        let mut allowlist = Allowlist::new();
+        allowlist.load_from_file_with_options(
+            &config.allowlist_path,
+            config.is_prod_mode(),
+            owner_policy,
+        )?;
+        let policy_engine = PolicyEngine::from_config_with_owner(
+            &config.policy_path,
+            config.max_result_age_secs,
+            owner_policy,
+        )?;
+
+        Ok(Self {
+            allowlist,
+            policy_engine,
+        })
+    }
+}
+
 pub async fn run_server(config: Arc<Config>) -> anyhow::Result<()> {
     let owner_policy = secure_owner_policy(&config)?;
 
-    // Bad trust material must fail startup. Per-request denial hides operator
-    // mistakes behind auth noise.
-    let mut initial_allowlist = Allowlist::new();
-    if config.is_prod_mode() {
-        initial_allowlist
-            .load_from_file_with_options(&config.allowlist_path, true, owner_policy)
-            .with_context(|| {
-                format!(
-                    "Failed to load allowlist from {} in production mode",
-                    config.allowlist_path.display()
-                )
-            })?;
-    } else {
-        let _ = initial_allowlist.load_from_file_with_options(
-            &config.allowlist_path,
-            false,
-            owner_policy,
-        );
-    }
-    let allowlist = Arc::new(ArcSwap::from(Arc::new(initial_allowlist)));
     let rate_limiter = Arc::new(RateLimiter::new());
 
     let adapter_registry = Arc::new(AdapterRegistry::load_from_dir_with_owner(
@@ -80,13 +114,10 @@ pub async fn run_server(config: Arc<Config>) -> anyhow::Result<()> {
         config.is_prod_mode(),
         owner_policy,
     )?);
-    let policy_engine = Arc::new(ArcSwap::from(Arc::new(
-        PolicyEngine::from_config_with_owner(
-            &config.policy_path,
-            config.max_result_age_secs,
-            owner_policy,
-        )?,
-    )));
+    let reloadable = Arc::new(ArcSwap::from(Arc::new(ReloadableState::load(
+        &config,
+        owner_policy,
+    )?)));
     if config.is_prod_mode() && !config.require_attestation {
         anyhow::bail!("OLA_REQUIRE_ATTESTATION cannot be disabled in prod mode");
     }
@@ -102,11 +133,10 @@ pub async fn run_server(config: Arc<Config>) -> anyhow::Result<()> {
 
     let state = ServerState {
         adapter_registry,
-        policy_engine,
+        reloadable,
         attester,
         nonce_store,
         audit_logger,
-        allowlist,
         rate_limiter,
         config: config.clone(),
         owner_policy,
@@ -207,24 +237,10 @@ pub async fn run_server(config: Arc<Config>) -> anyhow::Result<()> {
 }
 
 fn reload_state(state: &ServerState) {
-    // Keep old config on reload failure. A bad edit must not kill the daemon.
-    let mut new_list = Allowlist::new();
-    match new_list.load_from_file_with_options(
-        &state.config.allowlist_path,
-        state.config.is_prod_mode(),
-        state.owner_policy,
-    ) {
-        Ok(()) => state.allowlist.store(Arc::new(new_list)),
-        Err(e) => warn!("allowlist reload failed: {}", e),
-    }
-
-    match PolicyEngine::from_config_with_owner(
-        &state.config.policy_path,
-        state.config.max_result_age_secs,
-        state.owner_policy,
-    ) {
-        Ok(new_policy) => state.policy_engine.store(Arc::new(new_policy)),
-        Err(e) => warn!("policy reload failed: {}", e),
+    // Build both first. If either file is bad, keep the old state.
+    match ReloadableState::reload(&state.config, state.owner_policy) {
+        Ok(new_state) => state.reloadable.store(Arc::new(new_state)),
+        Err(e) => warn!("reload failed: {}", e),
     }
 
     if let Err(e) = state.audit_logger.reopen() {
@@ -257,7 +273,7 @@ async fn handle_client(stream: UnixStream, state: ServerState) -> anyhow::Result
     let creds = getsockopt(&stream, PeerCredentials)?;
 
     // Silent close leaks no allowlist shape.
-    if !state.allowlist.load().is_allowed(creds.uid()) {
+    if !state.reloadable.load().allowlist.is_allowed(creds.uid()) {
         metrics::inc_failures();
         return Ok(());
     }
@@ -280,6 +296,14 @@ async fn handle_client(stream: UnixStream, state: ServerState) -> anyhow::Result
         };
         metrics::inc_requests();
         let line = line_result?;
+
+        // Use one loaded state for this request. The allowlist check and policy
+        // decision must not come from different reloads.
+        let reloadable = state.reloadable.load_full();
+        if !reloadable.allowlist.is_allowed(creds.uid()) {
+            metrics::inc_failures();
+            return Ok(());
+        }
 
         // Per-request rate limit. Persistent sockets must not bypass budget.
         if !state.rate_limiter.check(creds.uid(), RATE_LIMIT_PER_UID) {
@@ -353,7 +377,7 @@ async fn handle_client(stream: UnixStream, state: ServerState) -> anyhow::Result
                     }
                 };
 
-                handle_verify_once(&state, caller_uid, uid, method, req_id).await
+                handle_verify_once(&state, &reloadable, caller_uid, uid, method, req_id).await
             }
             _ => {
                 metrics::inc_failures();
@@ -441,6 +465,7 @@ async fn audit_deny(
 // Critical path. Every Allow or Deny has a durable audit entry.
 async fn handle_verify_once(
     state: &ServerState,
+    reloadable: &ReloadableState,
     caller_uid: u32,
     uid: u32,
     method: &str,
@@ -628,7 +653,7 @@ async fn handle_verify_once(
         result,
         decision: None,
     };
-    let decision = state.policy_engine.load().evaluate(&context);
+    let decision = reloadable.policy_engine.evaluate(&context);
     context.decision = Some(decision.clone());
 
     // No durable audit entry, no decision.
