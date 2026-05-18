@@ -20,6 +20,9 @@ const PROTOCOL_VERSION: u8 = 1;
 const DEFAULT_SOCKET_PATH: &str = "/run/ola/ola.sock";
 const DEFAULT_METHOD: &str = "fido2";
 const DEFAULT_TIMEOUT_MS: u64 = 8_000;
+const MIN_TIMEOUT_MS: u64 = 100;
+const MAX_TIMEOUT_MS: u64 = 30_000;
+const MAX_METHOD_LEN: usize = 64;
 
 type PamHandle = c_void;
 
@@ -83,7 +86,10 @@ fn pam_sm_authenticate_inner(
     argc: c_int,
     argv: *const *const c_char,
 ) -> c_int {
-    let config = parse_argv(argc, argv);
+    let config = match parse_argv(argc, argv) {
+        Ok(config) => config,
+        Err(_) => return PAM_AUTH_ERR,
+    };
     let Some(name) = pam_user(pamh) else {
         return PAM_USER_UNKNOWN;
     };
@@ -261,11 +267,11 @@ fn request_id() -> Result<String, String> {
     Ok(id)
 }
 
-fn parse_argv(argc: c_int, argv: *const *const c_char) -> PamOlaConfig {
+fn parse_argv(argc: c_int, argv: *const *const c_char) -> Result<PamOlaConfig, String> {
     let mut config = PamOlaConfig::default();
 
     if argc <= 0 || argv.is_null() {
-        return config;
+        return Ok(config);
     }
 
     for i in 0..argc {
@@ -277,22 +283,50 @@ fn parse_argv(argc: c_int, argv: *const *const c_char) -> PamOlaConfig {
         }
         // SAFETY: ptr is non-null and PAM owns a NUL-terminated argument
         // string for the duration of this call.
-        let Ok(arg) = (unsafe { CStr::from_ptr(ptr) }).to_str() else {
-            continue;
-        };
+        let arg = (unsafe { CStr::from_ptr(ptr) })
+            .to_str()
+            .map_err(|_| "PAM argument is not utf-8".to_string())?;
 
         if let Some(value) = arg.strip_prefix("socket=") {
             config.socket_path = value.to_string();
         } else if let Some(value) = arg.strip_prefix("method=") {
+            validate_method_arg(value)?;
             config.method = value.to_string();
         } else if let Some(value) = arg.strip_prefix("timeout_ms=") {
-            if let Ok(timeout_ms) = value.parse::<u64>() {
-                config.timeout_ms = timeout_ms;
+            let timeout_ms = value
+                .parse::<u64>()
+                .map_err(|_| timeout_arg_error().to_string())?;
+            if !(MIN_TIMEOUT_MS..=MAX_TIMEOUT_MS).contains(&timeout_ms) {
+                return Err(timeout_arg_error().to_string());
             }
+            config.timeout_ms = timeout_ms;
         }
     }
 
-    config
+    Ok(config)
+}
+
+fn validate_method_arg(method: &str) -> Result<(), String> {
+    if method.is_empty() {
+        return Err("method must not be empty".to_string());
+    }
+    if method.trim() != method {
+        return Err("method must not contain leading or trailing whitespace".to_string());
+    }
+    if method.len() > MAX_METHOD_LEN {
+        return Err(format!("method must be at most {MAX_METHOD_LEN} bytes"));
+    }
+    if !method
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.'))
+    {
+        return Err("method must use ASCII letters, digits, '_', '-', or '.'".to_string());
+    }
+    Ok(())
+}
+
+fn timeout_arg_error() -> &'static str {
+    "timeout_ms must be between 100 and 30000"
 }
 
 fn pam_user(pamh: *mut PamHandle) -> Option<String> {
@@ -364,7 +398,7 @@ mod tests {
             CString::new("timeout_ms=123").unwrap(),
         ];
         let raw: Vec<*const c_char> = args.iter().map(|arg| arg.as_ptr()).collect();
-        let config = parse_argv(raw.len() as c_int, raw.as_ptr());
+        let config = parse_argv(raw.len() as c_int, raw.as_ptr()).expect("valid args");
 
         assert_eq!(config.socket_path, "/tmp/ola-test.sock");
         assert_eq!(config.method, "pin");
@@ -380,6 +414,33 @@ mod tests {
         assert_eq!(first.len(), 36);
         assert!(first[4..].bytes().all(|b| b.is_ascii_hexdigit()));
         assert_ne!(first, second);
+    }
+
+    #[test]
+    fn argv_accepts_defaults_without_args() {
+        let config = parse_argv(0, ptr::null()).expect("defaults");
+
+        assert_eq!(config.socket_path, DEFAULT_SOCKET_PATH);
+        assert_eq!(config.method, DEFAULT_METHOD);
+        assert_eq!(config.timeout_ms, DEFAULT_TIMEOUT_MS);
+    }
+
+    #[test]
+    fn argv_rejects_invalid_method() {
+        let args = [CString::new("method=two words").unwrap()];
+        let raw: Vec<*const c_char> = args.iter().map(|arg| arg.as_ptr()).collect();
+
+        assert!(parse_argv(raw.len() as c_int, raw.as_ptr()).is_err());
+    }
+
+    #[test]
+    fn argv_rejects_invalid_timeout() {
+        for arg in ["timeout_ms=nope", "timeout_ms=99", "timeout_ms=30001"] {
+            let args = [CString::new(arg).unwrap()];
+            let raw: Vec<*const c_char> = args.iter().map(|arg| arg.as_ptr()).collect();
+
+            assert!(parse_argv(raw.len() as c_int, raw.as_ptr()).is_err());
+        }
     }
 
     #[test]
