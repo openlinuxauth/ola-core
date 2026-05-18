@@ -21,6 +21,7 @@ releases exist.
 - Made adapter `timeout_ms` apply to the whole adapter request instead of each I/O step.
 - Randomized PAM bridge request IDs.
 - Rejected invalid PAM bridge `method` and `timeout_ms` arguments.
+- Capped the rate limiter UID table.
 
 ### Changed
 

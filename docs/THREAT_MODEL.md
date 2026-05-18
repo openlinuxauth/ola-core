@@ -70,7 +70,7 @@ Allowlist first: unauthorized clients are closed before request parsing.
 Bounded parsing: line framing has a max length. Oversized payloads fail at the codec layer.
 
 Per-UID rate limit: rate limiting is per request, not per connection alone. Persistent clients cannot
-bypass it.
+bypass it. The UID table is capped so UID-rotation floods cannot grow it without bound.
 
 Nonce replay defense: every adapter request gets a fresh nonce. The nonce must come back unchanged in
 the signed result and is single-use.
