@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
+use crate::core::types::result::{AuthMethod, VerificationResult};
 use crate::infrastructure::audit::hex::encode_hex;
 use crate::infrastructure::ipc::socket_setup::{
     prepare_socket_parent, remove_stale_socket_with, set_socket_mode, set_socket_owner,
@@ -41,6 +42,92 @@ fn test_config(socket_path: std::path::PathBuf, run_mode: &str) -> Config {
         max_result_age_secs: 30,
         require_attestation: false,
     }
+}
+
+fn write_secure(path: &std::path::Path, contents: &str) {
+    fs::write(path, contents).expect("write file");
+    let mut perms = fs::metadata(path).expect("file metadata").permissions();
+    perms.set_mode(0o600);
+    fs::set_permissions(path, perms).expect("set file perms");
+}
+
+fn policy(confidence: f32) -> String {
+    format!(
+        "[[rules]]\nmethod = \"fido2\"\nmin_confidence = {confidence}\nmax_age_secs = 30\nrequire_uid_match = true\n"
+    )
+}
+
+fn reload_test_state(temp: &tempfile::TempDir, allowed_uid: u32, confidence: f32) -> ServerState {
+    let adapters_dir = temp.path().join("adapters.d");
+    let adapter_keys_dir = temp.path().join("adapter-keys");
+    fs::create_dir_all(&adapters_dir).expect("create adapters dir");
+    fs::create_dir_all(&adapter_keys_dir).expect("create adapter keys dir");
+
+    let allowlist_path = temp.path().join("allowlist");
+    let policy_path = temp.path().join("policy.toml");
+    write_secure(&allowlist_path, &format!("{allowed_uid}\n"));
+    write_secure(&policy_path, &policy(confidence));
+
+    let config = Arc::new(Config {
+        socket_path: temp.path().join("ola.sock"),
+        run_mode: "prod".to_string(),
+        drain_secs: 1,
+        client_idle_timeout_secs: 1,
+        allowlist_path,
+        adapters_dir: adapters_dir.clone(),
+        policy_path,
+        audit_log_path: temp.path().join("audit.log"),
+        adapter_keys_dir,
+        max_result_age_secs: 30,
+        require_attestation: true,
+    });
+
+    ServerState {
+        adapter_registry: Arc::new(
+            AdapterRegistry::load_from_dir(&adapters_dir, false).expect("load adapter registry"),
+        ),
+        reloadable: Arc::new(ArcSwap::from(Arc::new(
+            ReloadableState::load(&config, OwnerPolicy::RootOrCurrent)
+                .expect("load reloadable state"),
+        ))),
+        attester: Arc::new(AttestationVerifier::new(HashMap::new())),
+        nonce_store: Arc::new(NonceStore::new()),
+        audit_logger: Arc::new(
+            AuditLogger::open(&config.audit_log_path, OwnerPolicy::RootOrCurrent)
+                .expect("open audit log"),
+        ),
+        rate_limiter: Arc::new(RateLimiter::new()),
+        config,
+        owner_policy: OwnerPolicy::RootOrCurrent,
+    }
+}
+
+fn policy_allows(reloadable: &ReloadableState, confidence: f32) -> bool {
+    let now = now_ms();
+    let context = AuthContext {
+        uid: 1000,
+        method: "fido2".to_string(),
+        request: VerificationRequest {
+            version: PROTOCOL_VERSION,
+            id: [1u8; 16],
+            uid: 1000,
+            nonce: [2u8; 32],
+            deadline_ms: now + 1000,
+        },
+        result: VerificationResult {
+            version: PROTOCOL_VERSION,
+            id: [1u8; 16],
+            confidence,
+            method: AuthMethod::Fido2,
+            timestamp_ms: now,
+            uid: 1000,
+            nonce: [2u8; 32],
+            evidence_hash: [3u8; 32],
+        },
+        decision: None,
+    };
+
+    reloadable.policy_engine.evaluate(&context) == PolicyDecision::Allow
 }
 
 #[test]
@@ -241,27 +328,87 @@ async fn verify_once_returns_error_when_allow_audit_fails() {
         adapter_registry: Arc::new(
             AdapterRegistry::load_from_dir(&adapters_dir, true).expect("load adapter registry"),
         ),
-        policy_engine: Arc::new(ArcSwap::from(Arc::new(
-            PolicyEngine::from_config(&policy_path, 30).expect("load policy"),
-        ))),
+        reloadable: Arc::new(ArcSwap::from(Arc::new(ReloadableState {
+            allowlist: Allowlist::new(),
+            policy_engine: PolicyEngine::from_config(&policy_path, 30).expect("load policy"),
+        }))),
         attester: Arc::new(AttestationVerifier::new(HashMap::new())),
         nonce_store: Arc::new(NonceStore::new()),
         audit_logger: Arc::new(AuditLogger::from_file_for_test(failing_audit)),
-        allowlist: Arc::new(ArcSwap::from(Arc::new(Allowlist::new()))),
         rate_limiter: Arc::new(RateLimiter::new()),
         config,
         owner_policy: OwnerPolicy::RootOrCurrent,
     };
 
     let uid = nix::unistd::getuid().as_raw();
-    let response =
-        handle_verify_once(&state, uid, uid, "fido2", Some("audit-fail".to_string())).await;
+    let reloadable = state.reloadable.load_full();
+    let response = handle_verify_once(
+        &state,
+        &reloadable,
+        uid,
+        uid,
+        "fido2",
+        Some("audit-fail".to_string()),
+    )
+    .await;
 
     adapter_task.abort();
 
     assert_eq!(response.id.as_deref(), Some("audit-fail"));
     assert_eq!(response.error.as_deref(), Some("audit failed"));
     assert!(response.result.is_none(), "audit failure must not allow");
+}
+
+#[tokio::test]
+async fn reload_keeps_old_state_when_new_policy_is_bad() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let old_uid = nix::unistd::getuid().as_raw().saturating_add(10_000);
+    let new_uid = old_uid + 1;
+    let state = reload_test_state(&temp, old_uid, 0.9);
+
+    write_secure(&state.config.allowlist_path, &format!("{new_uid}\n"));
+    write_secure(&state.config.policy_path, "not valid toml");
+
+    reload_state(&state);
+
+    let reloadable = state.reloadable.load();
+    assert!(reloadable.allowlist.is_allowed(old_uid));
+    assert!(!reloadable.allowlist.is_allowed(new_uid));
+    assert!(!policy_allows(&reloadable, 0.5));
+}
+
+#[tokio::test]
+async fn reload_keeps_old_state_when_new_allowlist_is_bad() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let old_uid = nix::unistd::getuid().as_raw().saturating_add(10_000);
+    let state = reload_test_state(&temp, old_uid, 0.9);
+
+    write_secure(&state.config.allowlist_path, "not-a-uid\n");
+    write_secure(&state.config.policy_path, &policy(0.4));
+
+    reload_state(&state);
+
+    let reloadable = state.reloadable.load();
+    assert!(reloadable.allowlist.is_allowed(old_uid));
+    assert!(!policy_allows(&reloadable, 0.5));
+}
+
+#[tokio::test]
+async fn reload_applies_allowlist_and_policy_together() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let old_uid = nix::unistd::getuid().as_raw().saturating_add(10_000);
+    let new_uid = old_uid + 1;
+    let state = reload_test_state(&temp, old_uid, 0.9);
+
+    write_secure(&state.config.allowlist_path, &format!("{new_uid}\n"));
+    write_secure(&state.config.policy_path, &policy(0.4));
+
+    reload_state(&state);
+
+    let reloadable = state.reloadable.load();
+    assert!(!reloadable.allowlist.is_allowed(old_uid));
+    assert!(reloadable.allowlist.is_allowed(new_uid));
+    assert!(policy_allows(&reloadable, 0.5));
 }
 
 #[test]

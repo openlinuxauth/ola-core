@@ -16,6 +16,7 @@ releases exist.
 - Added systemd hardening for kernel logs, clocks, devices, runtime directory ownership, namespaces,
   memory execution, and kernel controls.
 - Fixed PAM bridge return-code semantics for deny, unknown user, and transport failure.
+- Made `SIGHUP` keep the old policy and allowlist if either reload fails.
 
 ### Changed
 
