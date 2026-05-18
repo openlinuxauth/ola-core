@@ -6,6 +6,9 @@ if [ "$(id -u)" -ne 0 ]; then
   exit 1
 fi
 
+echo ">>> Prototype install. This writes production-style system paths, but OLA is not production-ready."
+echo ">>> It does not install a real adapter or make a safe login stack."
+
 REPO_ROOT="$(cd "$(dirname "$(realpath "$0")")/.." && pwd)"
 CORE_DIR="$REPO_ROOT/crates/ola-core"
 BINARY_PATH="/usr/local/bin/ola-core"
