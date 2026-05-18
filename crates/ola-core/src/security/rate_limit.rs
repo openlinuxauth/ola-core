@@ -6,9 +6,14 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use tokio::task::JoinHandle;
 
+const MAX_TRACKED_UIDS: usize = 4096;
+const RATE_WINDOW: Duration = Duration::from_secs(1);
+const STALE_AFTER: Duration = Duration::from_secs(60);
+
 pub struct RateLimiter {
     // MAX_CONNECTIONS bounds contention. One lock removes a dependency family.
     limits: Arc<Mutex<HashMap<u32, RateEntry>>>,
+    max_tracked_uids: usize,
     cleanup_task: Option<JoinHandle<()>>,
 }
 
@@ -19,15 +24,16 @@ struct RateEntry {
 
 impl RateLimiter {
     pub fn new() -> Self {
+        Self::with_max_tracked_uids(MAX_TRACKED_UIDS)
+    }
+
+    fn with_max_tracked_uids(max_tracked_uids: usize) -> Self {
         let limits = Arc::new(Mutex::new(HashMap::new()));
 
-        // Entries older than 60s are dead — no traffic from that UID in a full
-        // minute. Without cleanup, a slow DoS that rotates UIDs grows the table
-        // without bound. Cleanup runs every 60s, so dead entries live 60–120s
-        // past their last request.
+        // Cleanup keeps old UID slots reusable. The hard cap is the real bound.
         let limits_clone = limits.clone();
         let cleanup_task = tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(60));
+            let mut interval = tokio::time::interval(STALE_AFTER);
             loop {
                 interval.tick().await;
                 Self::cleanup_stale(&limits_clone);
@@ -36,6 +42,7 @@ impl RateLimiter {
 
         Self {
             limits,
+            max_tracked_uids,
             cleanup_task: Some(cleanup_task),
         }
     }
@@ -45,11 +52,19 @@ impl RateLimiter {
         let Ok(mut limits) = self.limits.lock() else {
             return false;
         };
+
+        if !limits.contains_key(&uid) && limits.len() >= self.max_tracked_uids {
+            Self::cleanup_stale_locked(&mut limits, now);
+            if limits.len() >= self.max_tracked_uids {
+                return false;
+            }
+        }
+
         let entry = limits.entry(uid).or_insert(RateEntry {
             last_reset: now,
             count: 0,
         });
-        if now.duration_since(entry.last_reset) > Duration::from_secs(1) {
+        if now.duration_since(entry.last_reset) > RATE_WINDOW {
             entry.last_reset = now;
             entry.count = 0;
         }
@@ -62,7 +77,11 @@ impl RateLimiter {
         let Ok(mut limits) = limits.lock() else {
             return;
         };
-        limits.retain(|_, entry| now.duration_since(entry.last_reset) < Duration::from_secs(60));
+        Self::cleanup_stale_locked(&mut limits, now);
+    }
+
+    fn cleanup_stale_locked(limits: &mut HashMap<u32, RateEntry>, now: Instant) {
+        limits.retain(|_, entry| now.duration_since(entry.last_reset) < STALE_AFTER);
     }
 }
 
@@ -110,5 +129,39 @@ mod tests {
         let limits = limits.lock().expect("rate limit state");
         assert!(limits.get(&1000).is_none());
         assert!(limits.get(&1001).is_some());
+    }
+
+    #[tokio::test]
+    async fn test_rejects_new_uid_when_table_is_full() {
+        let limiter = RateLimiter::with_max_tracked_uids(1);
+
+        assert!(limiter.check(1000, 10));
+        assert!(!limiter.check(1001, 10));
+    }
+
+    #[tokio::test]
+    async fn test_existing_uid_uses_existing_slot_when_table_is_full() {
+        let limiter = RateLimiter::with_max_tracked_uids(1);
+
+        assert!(limiter.check(1000, 2));
+        assert!(limiter.check(1000, 2));
+        assert!(!limiter.check(1000, 2));
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_frees_slot_before_rejecting_new_uid() {
+        let limiter = RateLimiter::with_max_tracked_uids(1);
+        {
+            let mut limits = limiter.limits.lock().expect("rate limit state");
+            limits.insert(
+                1000,
+                RateEntry {
+                    last_reset: Instant::now() - STALE_AFTER - Duration::from_secs(1),
+                    count: 1,
+                },
+            );
+        }
+
+        assert!(limiter.check(1001, 10));
     }
 }
