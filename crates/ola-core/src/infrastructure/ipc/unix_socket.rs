@@ -28,7 +28,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::net::UnixStream;
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
-use tokio::time::{timeout, Duration};
+use tokio::time::{timeout, Duration, Instant};
 use tokio_util::codec::{Framed, LinesCodec};
 use uzers::get_user_by_name;
 
@@ -510,6 +510,8 @@ async fn handle_verify_once(
         }
     };
 
+    // Core and adapter see the same budget. Time spent before the response leaves less time to finish.
+    let adapter_deadline = Instant::now() + Duration::from_millis(resolved.timeout_ms);
     let request = VerificationRequest {
         version: PROTOCOL_VERSION,
         id: new_uuid(),
@@ -521,7 +523,7 @@ async fn handle_verify_once(
     // Adapter work sits outside the trust boundary. Core verifies the result.
     let result = match state
         .adapter_registry
-        .dispatch_resolved(&resolved, request.clone())
+        .dispatch_resolved(&resolved, request.clone(), adapter_deadline)
         .await
     {
         Ok(r) => r,

@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Semaphore;
-use tokio::time::timeout;
+use tokio::time::{timeout, Instant};
 
 const ADAPTER_QUEUE_TIMEOUT: Duration = Duration::from_millis(250);
 
@@ -111,6 +111,7 @@ impl AdapterRegistry {
         &self,
         resolved: &ResolvedAdapter,
         request: VerificationRequest,
+        deadline: Instant,
     ) -> Result<VerificationResult, AdapterError> {
         let client = &resolved.client;
 
@@ -125,7 +126,7 @@ impl AdapterRegistry {
             .await
             .map_err(|_| AdapterError::AdapterBusy(client.name.clone()))?
             .map_err(|_| AdapterError::AdapterDown(client.name.clone()))?;
-        client.verify(request).await
+        client.verify(request, deadline).await
     }
 
     pub fn available_methods(&self) -> Vec<String> {

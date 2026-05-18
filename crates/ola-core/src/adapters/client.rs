@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::UnixStream;
 use tokio::sync::Semaphore;
-use tokio::time::timeout;
+use tokio::time::{timeout, timeout_at, Instant};
 use tokio_util::codec::{Framed, LinesCodec, LinesCodecError};
 
 const MAX_RESPONSE_BYTES: usize = 65536; // 64KB
@@ -30,12 +30,13 @@ impl AdapterClient {
     pub async fn verify(
         &self,
         request: VerificationRequest,
+        deadline: Instant,
     ) -> Result<VerificationResult, AdapterError> {
         // One connection per request, no pool. Unix socket setup is sub-ms;
         // the hardware step (fingerprint, FIDO2 assertion) dominates. A pool
         // adds reconnection and adapter-restart complexity with no measurable
         // gain.
-        let stream = timeout(self.timeout, UnixStream::connect(&self.socket_path))
+        let stream = timeout_at(deadline, UnixStream::connect(&self.socket_path))
             .await
             .map_err(|_| AdapterError::Timeout)?
             .map_err(AdapterError::Connect)?;
@@ -55,12 +56,12 @@ impl AdapterClient {
         let mut framed = Framed::new(stream, LinesCodec::new_with_max_length(MAX_RESPONSE_BYTES));
 
         let req_json = serde_json::to_string(&request)?;
-        timeout(self.timeout, framed.send(req_json))
+        timeout_at(deadline, framed.send(req_json))
             .await
             .map_err(|_| AdapterError::Timeout)?
             .map_err(AdapterError::Codec)?;
 
-        let response_line = timeout(self.timeout, framed.next())
+        let response_line = timeout_at(deadline, framed.next())
             .await
             .map_err(|_| AdapterError::Timeout)?
             .ok_or(AdapterError::Disconnected)?
@@ -155,6 +156,7 @@ mod tests {
     use crate::core::types::result::{AuthMethod, VerificationResult};
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     use tokio::net::UnixListener;
+    use tokio::time::sleep;
 
     fn request() -> VerificationRequest {
         VerificationRequest {
@@ -193,6 +195,10 @@ mod tests {
         tempfile::tempdir_in(std::env::current_dir().expect("current dir")).expect("tempdir")
     }
 
+    fn deadline_for(client: &AdapterClient) -> Instant {
+        Instant::now() + client.timeout
+    }
+
     async fn serve_response(listener: UnixListener, result: VerificationResult) {
         let (stream, _) = listener.accept().await.expect("accept adapter client");
         let mut reader = BufReader::new(stream);
@@ -215,9 +221,10 @@ mod tests {
         let path = dir.path().join("adapter.sock");
         let listener = UnixListener::bind(&path).expect("bind adapter");
         let server = tokio::spawn(serve_response(listener, result_with([1u8; 16], 2)));
+        let client = client(path, nix::unistd::getuid().as_raw());
 
-        let err = client(path, nix::unistd::getuid().as_raw())
-            .verify(request())
+        let err = client
+            .verify(request(), deadline_for(&client))
             .await
             .expect_err("version mismatch must fail");
         assert!(matches!(err, AdapterError::VersionMismatch(2)));
@@ -230,9 +237,10 @@ mod tests {
         let path = dir.path().join("adapter.sock");
         let listener = UnixListener::bind(&path).expect("bind adapter");
         let server = tokio::spawn(serve_response(listener, result_with([9u8; 16], 1)));
+        let client = client(path, nix::unistd::getuid().as_raw());
 
-        let err = client(path, nix::unistd::getuid().as_raw())
-            .verify(request())
+        let err = client
+            .verify(request(), deadline_for(&client))
             .await
             .expect_err("id mismatch must fail");
         assert!(matches!(err, AdapterError::IdMismatch));
@@ -249,9 +257,10 @@ mod tests {
         });
         let actual_uid = nix::unistd::getuid().as_raw();
         let wrong_uid = actual_uid.saturating_add(1);
+        let client = client(path, wrong_uid);
 
-        let err = client(path, wrong_uid)
-            .verify(request())
+        let err = client
+            .verify(request(), deadline_for(&client))
             .await
             .expect_err("uid mismatch must fail");
         assert!(matches!(
@@ -261,6 +270,41 @@ mod tests {
                 got
             } if expected == wrong_uid && got == actual_uid
         ));
+        server.await.expect("server task");
+    }
+
+    #[tokio::test]
+    async fn test_verify_uses_one_deadline_for_request() {
+        let dir = tempdir();
+        let path = dir.path().join("adapter.sock");
+        let listener = UnixListener::bind(&path).expect("bind adapter");
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept adapter client");
+            let mut reader = BufReader::new(stream);
+            let mut line = String::new();
+            reader
+                .read_line(&mut line)
+                .await
+                .expect("read adapter request");
+            sleep(Duration::from_millis(250)).await;
+            let mut stream = reader.into_inner();
+            let response =
+                serde_json::to_string(&result_with([1u8; 16], 1)).expect("serialize result");
+            let _ = stream.write_all(format!("{response}\n").as_bytes()).await;
+        });
+        let client = AdapterClient {
+            timeout: Duration::from_millis(100),
+            ..client(path, nix::unistd::getuid().as_raw())
+        };
+        let started = Instant::now();
+
+        let err = client
+            .verify(request(), deadline_for(&client))
+            .await
+            .expect_err("slow adapter must time out");
+
+        assert!(matches!(err, AdapterError::Timeout));
+        assert!(started.elapsed() < Duration::from_millis(220));
         server.await.expect("server task");
     }
 }
