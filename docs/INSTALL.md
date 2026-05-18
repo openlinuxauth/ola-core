@@ -29,6 +29,8 @@ Read it before running it.
 sudo ./scripts/install_production.sh
 ```
 
+The script name means production-style system paths. It does not mean OLA is production-ready.
+
 It sets up:
 
 - `ola` system user and group.

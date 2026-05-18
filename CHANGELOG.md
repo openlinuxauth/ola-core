@@ -22,6 +22,7 @@ releases exist.
 - Randomized PAM bridge request IDs.
 - Rejected invalid PAM bridge `method` and `timeout_ms` arguments.
 - Capped the rate limiter UID table.
+- Clarified that the system installer uses production-style paths for a prototype.
 
 ### Changed
 
