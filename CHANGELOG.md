@@ -17,6 +17,7 @@ releases exist.
   memory execution, and kernel controls.
 - Fixed PAM bridge return-code semantics for deny, unknown user, and transport failure.
 - Made `SIGHUP` keep the old policy and allowlist if either reload fails.
+- Made audit reopen wait for in-flight writes before carrying the hash forward.
 
 ### Changed
 
