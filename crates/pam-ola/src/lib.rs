@@ -6,7 +6,7 @@ use std::ffi::CStr;
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
 use std::ptr;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 mod unix_connect;
 use unix_connect::connect_with_timeout;
@@ -170,7 +170,10 @@ pub fn authenticate(config: &PamOlaConfig, uid: Option<u32>) -> AuthOutcome {
         Some(uid) => json!({ "method": config.method, "uid": uid }),
         None => json!({ "method": config.method }),
     };
-    let request_id = request_id();
+    let request_id = match request_id() {
+        Ok(id) => id,
+        Err(e) => return AuthOutcome::Error(e),
+    };
     let request = json!({
         "version": PROTOCOL_VERSION,
         "id": request_id,
@@ -246,12 +249,16 @@ fn read_line(stream: &mut UnixStream) -> Result<String, String> {
     String::from_utf8(buf).map_err(|e| format!("response was not utf-8: {e}"))
 }
 
-fn request_id() -> String {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or_default();
-    format!("pam-{}-{now}", std::process::id())
+fn request_id() -> Result<String, String> {
+    let mut bytes = [0u8; 16];
+    getrandom::fill(&mut bytes).map_err(|_| "request id randomness unavailable".to_string())?;
+    let mut id = String::with_capacity(36);
+    id.push_str("pam-");
+    for byte in bytes {
+        use std::fmt::Write as _;
+        write!(&mut id, "{byte:02x}").expect("write to string");
+    }
+    Ok(id)
 }
 
 fn parse_argv(argc: c_int, argv: *const *const c_char) -> PamOlaConfig {
@@ -362,6 +369,17 @@ mod tests {
         assert_eq!(config.socket_path, "/tmp/ola-test.sock");
         assert_eq!(config.method, "pin");
         assert_eq!(config.timeout_ms, 123);
+    }
+
+    #[test]
+    fn request_ids_are_random_hex() {
+        let first = request_id().expect("first request id");
+        let second = request_id().expect("second request id");
+
+        assert!(first.starts_with("pam-"));
+        assert_eq!(first.len(), 36);
+        assert!(first[4..].bytes().all(|b| b.is_ascii_hexdigit()));
+        assert_ne!(first, second);
     }
 
     #[test]
