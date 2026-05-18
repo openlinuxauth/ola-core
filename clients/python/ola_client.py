@@ -53,7 +53,7 @@ def default_timeout():
 
 
 def default_socket_path():
-    return os.environ.get("OLA_SOCKET", DEFAULT_SOCKET_PATH)
+    return os.environ.get("OLA_SOCKET_PATH") or os.environ.get("OLA_SOCKET") or DEFAULT_SOCKET_PATH
 
 
 class OlaClient:

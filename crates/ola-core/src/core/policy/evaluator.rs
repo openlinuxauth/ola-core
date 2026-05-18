@@ -65,10 +65,7 @@ impl PolicyEngine {
         let age_ms = now_ms - result.timestamp_ms;
         let max_age_secs = rule.max_age_secs.min(self.max_result_age_secs);
         let Some(max_age_ms) = max_age_secs.checked_mul(1000) else {
-            return PolicyDecision::Deny(DenyReason::ResultTooOld {
-                age_ms,
-                max_age_ms: u64::MAX,
-            });
+            return PolicyDecision::Deny(DenyReason::ResultAgeWindowOverflow);
         };
         if age_ms > max_age_ms {
             return PolicyDecision::Deny(DenyReason::ResultTooOld { age_ms, max_age_ms });
@@ -308,10 +305,7 @@ mod tests {
 
         assert!(matches!(
             engine.evaluate(&context(1.0, 1000, now_ms)),
-            PolicyDecision::Deny(DenyReason::ResultTooOld {
-                max_age_ms: u64::MAX,
-                ..
-            })
+            PolicyDecision::Deny(DenyReason::ResultAgeWindowOverflow)
         ));
     }
 
