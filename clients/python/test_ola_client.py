@@ -8,8 +8,9 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import patch
 
-from ola_client import OlaClient, PROTOCOL_VERSION
+from ola_client import OlaClient, PROTOCOL_VERSION, default_socket_path
 
 
 def run_client(response_for_request):
@@ -60,6 +61,22 @@ def json_response(request, **fields):
 
 
 class OlaClientTests(unittest.TestCase):
+    def test_socket_path_env_is_used(self):
+        with patch.dict(os.environ, {"OLA_SOCKET_PATH": "/tmp/path.sock"}, clear=True):
+            self.assertEqual(default_socket_path(), "/tmp/path.sock")
+
+    def test_legacy_socket_env_is_used(self):
+        with patch.dict(os.environ, {"OLA_SOCKET": "/tmp/legacy.sock"}, clear=True):
+            self.assertEqual(default_socket_path(), "/tmp/legacy.sock")
+
+    def test_socket_path_env_wins_over_legacy(self):
+        with patch.dict(
+            os.environ,
+            {"OLA_SOCKET_PATH": "/tmp/path.sock", "OLA_SOCKET": "/tmp/legacy.sock"},
+            clear=True,
+        ):
+            self.assertEqual(default_socket_path(), "/tmp/path.sock")
+
     def test_valid_response_passes(self):
         result = run_client(lambda request: json_response(request))
 
