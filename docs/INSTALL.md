@@ -81,7 +81,8 @@ Fields:
 - `socket_path`: Unix socket path for the adapter.
 - `expected_uid`: UID that must own the adapter process.
 - `methods`: method names handled by this adapter.
-- `timeout_ms`: adapter timeout in milliseconds. Valid range is `100` to `30000`.
+- `timeout_ms`: total budget for one adapter request in milliseconds. Valid range is `100` to
+  `30000`.
 
 Adapter names and method names may use ASCII letters, digits, `_`, `-`, or `.`. They must be at most
 64 bytes.
