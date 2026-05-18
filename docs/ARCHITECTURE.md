@@ -169,7 +169,8 @@ The next audit step is an external verifier and a way to ship or checkpoint hash
 If the write or sync fails, the daemon returns an internal error instead of returning allow or deny.
 
 `SIGHUP` reloads policy and allowlist together and reopens the audit log for rotation. If either
-file is invalid, the old policy and allowlist stay live.
+file is invalid, the old policy and allowlist stay live. Audit reopen waits for in-flight writes
+before carrying the hash forward.
 
 ## Future
 

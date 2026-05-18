@@ -45,12 +45,12 @@ impl AuditLogger {
     }
 
     pub fn reopen(&self) -> anyhow::Result<()> {
-        let prev_hash = last_entry_hash(&self.path)?;
-        let file = open_secure_append(&self.path, 0o640, self.owner)?;
         let mut guard = self
             .state
             .lock()
             .map_err(|_| anyhow::anyhow!("audit mutex poisoned"))?;
+        let prev_hash = guard.prev_hash.clone();
+        let file = open_secure_append(&self.path, 0o640, self.owner)?;
         *guard = AuditState { file, prev_hash };
         Ok(())
     }
@@ -215,6 +215,38 @@ mod tests {
         assert!(old_log.contains("before"));
         assert!(!old_log.contains("after"));
         assert!(new_log.contains("after"));
+    }
+
+    #[tokio::test]
+    async fn test_reopen_keeps_hash_chain_after_late_write() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let log_path = dir.path().join("audit.log");
+        let rotated_path = dir.path().join("audit.log.1");
+        let logger =
+            AuditLogger::open(&log_path, OwnerPolicy::RootOrCurrent).expect("open audit log");
+
+        logger.log(entry("one")).await.expect("write first");
+        std::fs::rename(&log_path, &rotated_path).expect("rotate log");
+        std::fs::write(&log_path, b"").expect("create replacement log");
+        std::fs::set_permissions(&log_path, std::fs::Permissions::from_mode(0o640))
+            .expect("set replacement mode");
+
+        logger.log(entry("two")).await.expect("write late");
+        logger.reopen().expect("reopen audit log");
+        logger
+            .log(entry("three"))
+            .await
+            .expect("write after reopen");
+
+        let rotated_log = std::fs::read_to_string(rotated_path).expect("read rotated log");
+        let new_log = std::fs::read_to_string(log_path).expect("read new log");
+        let rotated_lines = rotated_log.lines().collect::<Vec<_>>();
+        let late: serde_json::Value =
+            serde_json::from_str(rotated_lines[1]).expect("late entry json");
+        let after: serde_json::Value =
+            serde_json::from_str(new_log.lines().next().expect("new entry")).expect("new json");
+
+        assert_eq!(after["prev_hash"], late["entry_hash"]);
     }
 
     #[tokio::test]
