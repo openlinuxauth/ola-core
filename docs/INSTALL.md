@@ -147,6 +147,8 @@ Audit entries are JSON lines. Full field details are in `PROTOCOL.md`.
 Log rotation renames the audit log and sends `SIGHUP` to `ola.service`. The daemon reopens the audit
 log on `SIGHUP`. It does not use `copytruncate`.
 
+Keep log rotation enabled. Startup recovery reads only a bounded tail of the audit log.
+
 The audit log has a local hash chain, but it is not safe from root by itself.
 
 If audit history must survive local root access, ship the logs elsewhere or save checkpoints outside the

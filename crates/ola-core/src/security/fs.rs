@@ -82,25 +82,54 @@ pub fn read_secure_exact<const N: usize>(
 }
 
 pub fn open_secure_append(path: &Path, mode: u32, owner: OwnerPolicy) -> anyhow::Result<File> {
-    let file = OpenOptions::new()
-        .append(true)
-        .create(true)
-        .mode(mode)
-        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK)
-        .open(path)
-        .map_err(|e| {
-            anyhow::anyhow!(
+    let existing = open_append_existing(path);
+    let (file, check_mode) = match existing {
+        Ok(file) => (file, true),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => match create_append_log(path, mode) {
+            Ok(file) => (file, false),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => (
+                open_append_existing(path).map_err(|e| {
+                    anyhow::anyhow!(
+                        "Failed to safely open append log at {}: {}",
+                        path.display(),
+                        e
+                    )
+                })?,
+                true,
+            ),
+            Err(e) => {
+                return Err(anyhow::anyhow!(
+                    "Failed to safely open append log at {}: {}",
+                    path.display(),
+                    e
+                ));
+            }
+        },
+        Err(e) => {
+            return Err(anyhow::anyhow!(
                 "Failed to safely open append log at {}: {}",
                 path.display(),
                 e
-            )
-        })?;
+            ));
+        }
+    };
 
     let stat = fstat(file.as_raw_fd())?;
     if (stat.st_mode & libc::S_IFMT) != libc::S_IFREG {
         anyhow::bail!("append log {} must be a regular file", path.display());
     }
     validate_owner(stat.st_uid, path, "append log", owner)?;
+    if check_mode {
+        let existing_mode = stat.st_mode & 0o777;
+        if ![0o600, mode].contains(&existing_mode) {
+            anyhow::bail!(
+                "append log {} must have mode 0600 or {:04o}, found {:o}",
+                path.display(),
+                mode,
+                existing_mode
+            );
+        }
+    }
 
     // SAFETY: file is an open regular file descriptor, mode is a permission mask.
     let ret = unsafe { libc::fchmod(file.as_raw_fd(), mode) };
@@ -113,6 +142,24 @@ pub fn open_secure_append(path: &Path, mode: u32, owner: OwnerPolicy) -> anyhow:
     }
 
     Ok(file)
+}
+
+fn open_append_existing(path: &Path) -> std::io::Result<File> {
+    OpenOptions::new()
+        .read(true)
+        .append(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK)
+        .open(path)
+}
+
+fn create_append_log(path: &Path, mode: u32) -> std::io::Result<File> {
+    OpenOptions::new()
+        .read(true)
+        .append(true)
+        .create_new(true)
+        .mode(mode)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK)
+        .open(path)
 }
 
 fn open_secure_read(path: &Path, spec: SecureFileSpec) -> anyhow::Result<File> {
