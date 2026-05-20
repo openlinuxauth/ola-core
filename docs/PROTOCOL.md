@@ -140,10 +140,10 @@ Healthy response:
 {"version":1,"ok":true}
 ```
 
-A successful ping marks the adapter up, including after earlier failures.
+Configured adapters start down. One successful ping marks an adapter up.
 
-A failed ping first marks the adapter degraded. After three consecutive failed pings, the adapter
-is marked down.
+After an adapter has been up, one failed ping marks it degraded. Three consecutive failed pings mark
+it down.
 
 Down adapters are not listed and do not receive verification requests.
 
