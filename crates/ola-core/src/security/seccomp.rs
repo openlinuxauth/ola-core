@@ -72,10 +72,8 @@ pub fn apply_seccomp() -> anyhow::Result<()> {
         libc::SYS_getrandom,
         // Audit durability.
         // Audit logger calls File::sync_data() per decision; on Linux that is
-        // fdatasync(2). fsync(2) stays whitelisted for future log and store
-        // paths that call sync_all().
+        // fdatasync(2).
         libc::SYS_fdatasync,
-        libc::SYS_fsync,
         // Process exit.
         libc::SYS_rt_sigreturn,
         libc::SYS_exit,

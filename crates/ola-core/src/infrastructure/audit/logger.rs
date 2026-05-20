@@ -74,7 +74,7 @@ impl AuditLogger {
                 .context("audit write failed")?;
 
             // Missing audit entries are worse than local login latency.
-            state.file.sync_data().context("audit fsync failed")?;
+            state.file.sync_data().context("audit sync failed")?;
             state.prev_hash = entry.entry_hash;
             Ok(())
         })
