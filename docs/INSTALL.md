@@ -93,8 +93,9 @@ Adapter names and method names may use ASCII letters, digits, `_`, `-`, or `.`. 
 
 One adapter can handle multiple methods. Two adapters cannot handle the same method.
 
-Configured adapters must answer health pings. If an adapter is down, `ola-core` hides its methods from
-`list_methods` and rejects requests before sending a nonce.
+Configured adapters start unavailable. After one successful health ping, `ola-core` lists their methods
+and can route requests to them. If an adapter is down, `ola-core` hides its methods from `list_methods`
+and rejects requests before sending a nonce.
 
 ## Adapter keys
 

@@ -87,6 +87,9 @@ Adapter health matters before authentication starts.
 
 If an adapter is down, `ola-core` hides its methods and rejects requests for it before sending a nonce.
 
+Configured adapters start unavailable. One successful health ping is required before their methods are
+listed or used.
+
 ## `any` resolves once
 
 `any` means the first available method after the registry has filtered out down adapters.

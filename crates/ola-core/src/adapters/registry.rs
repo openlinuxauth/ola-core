@@ -134,10 +134,8 @@ impl AdapterRegistry {
             .clients
             .keys()
             .filter(|method| {
-                // Surface methods whose adapter is Up or Degraded. Hide Down.
-                // Degraded means some failures but still responding — keep it
-                // listed. Down means 3+ consecutive ping failures — hide it,
-                // rather than let clients queue requests that time out.
+                // Surface methods whose adapter is Up or Degraded. Hide Down,
+                // including adapters that have not passed a health check yet.
                 self.clients
                     .get(*method)
                     .is_some_and(|client| !self.adapter_down(&client.name))
@@ -180,20 +178,21 @@ impl AdapterRegistry {
     fn adapter_down(&self, name: &str) -> bool {
         self.health
             .lock()
-            .ok()
-            .and_then(|health| {
+            .map(|health| {
                 health
                     .get(name)
-                    .map(|entry| entry.status == HealthStatus::Down)
+                    .is_none_or(|entry| entry.status == HealthStatus::Down)
             })
-            .unwrap_or(false)
+            .unwrap_or(true)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::adapters::health::AdapterHealth;
     use std::os::unix::fs::PermissionsExt;
+    use std::time::Instant;
 
     fn write_config(dir: &Path, file: &str, name: &str, methods: &[&str]) -> anyhow::Result<()> {
         let methods = methods
@@ -208,6 +207,20 @@ mod tests {
         std::fs::write(&path, contents)?;
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644))?;
         Ok(())
+    }
+
+    fn mark_adapter(registry: &AdapterRegistry, name: &str, status: HealthStatus) {
+        let now = Instant::now();
+        let mut health = registry.health.lock().expect("health lock");
+        health.insert(
+            name.to_string(),
+            AdapterHealth {
+                status,
+                consecutive_failures: 0,
+                last_checked: now,
+                last_success: (status == HealthStatus::Up).then_some(now),
+            },
+        );
     }
 
     #[tokio::test]
@@ -243,10 +256,54 @@ mod tests {
         write_config(temp.path(), "a.toml", "adapter_a", &["fido2"]).expect("write config");
 
         let registry = AdapterRegistry::load_from_dir(temp.path(), true).expect("load registry");
+        mark_adapter(&registry, "adapter_a", HealthStatus::Up);
+        mark_adapter(&registry, "adapter_b", HealthStatus::Up);
         let resolved = registry.resolve("any").expect("resolve any");
 
         assert_eq!(resolved.method, "fido2");
         assert_eq!(resolved.adapter_name, "adapter_a");
         assert_eq!(resolved.timeout_ms, 1000);
+    }
+
+    #[tokio::test]
+    async fn methods_start_unavailable_until_health_succeeds() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        write_config(temp.path(), "a.toml", "adapter_a", &["fido2"]).expect("write config");
+
+        let registry = AdapterRegistry::load_from_dir(temp.path(), true).expect("load registry");
+        assert_eq!(registry.available_methods(), Vec::<String>::new());
+        assert!(registry.resolve("any").is_err());
+
+        mark_adapter(&registry, "adapter_a", HealthStatus::Up);
+        assert_eq!(registry.available_methods(), vec!["fido2".to_string()]);
+        assert_eq!(
+            registry.resolve("any").expect("resolve any").method,
+            "fido2"
+        );
+    }
+
+    #[tokio::test]
+    async fn dispatch_rejects_until_health_succeeds() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        write_config(temp.path(), "a.toml", "adapter_a", &["fido2"]).expect("write config");
+
+        let registry = AdapterRegistry::load_from_dir(temp.path(), true).expect("load registry");
+        let resolved = registry.resolve("fido2").expect("resolve fido2");
+        let err = registry
+            .dispatch_resolved(
+                &resolved,
+                VerificationRequest {
+                    version: 1,
+                    id: [1; 16],
+                    uid: 1000,
+                    nonce: [2; 32],
+                    deadline_ms: 9999,
+                },
+                tokio::time::Instant::now() + Duration::from_secs(1),
+            )
+            .await
+            .expect_err("adapter must start down");
+
+        assert!(matches!(err, AdapterError::AdapterDown(name) if name == "adapter_a"));
     }
 }
