@@ -99,10 +99,10 @@ if [ ! -S "$SOCKET_PATH" ]; then
 fi
 
 printf '== Core status ==\n'
-OLA_SOCKET="$SOCKET_PATH" python3 "$REPO_ROOT/clients/python/ola_client.py" status
+OLA_SOCKET_PATH="$SOCKET_PATH" python3 "$REPO_ROOT/clients/python/ola_client.py" status
 
 printf '== verify_once through core -> adapter ==\n'
-OLA_SOCKET="$SOCKET_PATH" python3 "$REPO_ROOT/clients/python/ola_client.py" verify_once fido2
+OLA_SOCKET_PATH="$SOCKET_PATH" python3 "$REPO_ROOT/clients/python/ola_client.py" verify_once fido2
 
 printf '== PAM module artifact ==\n'
 printf '%s\n' "$PAM_MODULE"
