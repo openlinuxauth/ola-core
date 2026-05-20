@@ -4,14 +4,15 @@ use crate::core::types::context::AuthContext;
 use crate::core::types::decision::PolicyDecision;
 use crate::core::types::result::VerificationResult;
 use crate::infrastructure::audit::hex::encode_hex;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const HASH_PAYLOAD_V1_PREFIX: &[u8] = b"OLA-AUDIT-HASH-V1\n";
 
 /// One durable authorization fact. The logger fills `prev_hash` and
 /// `entry_hash`; callers leave them empty.
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AuditEntry {
     pub ts_ms: u64,
     pub request_id: Option<String>,

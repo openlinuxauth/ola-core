@@ -138,14 +138,7 @@ fn last_entry_hash(file: &File, path: &Path) -> anyhow::Result<String> {
     };
     let line_str = std::str::from_utf8(line)
         .with_context(|| format!("audit log {} has non-utf8 entry", path.display()))?;
-    if let Ok(value) = serde_json::from_str::<serde_json::Value>(line_str) {
-        if let Some(hash) = value.get("entry_hash").and_then(|v| v.as_str()) {
-            if is_hex_hash(hash) {
-                return Ok(hash.to_string());
-            }
-        }
-    }
-    Ok(hex_sha256(line))
+    recover_entry_hash(line_str, path)
 }
 
 fn last_complete_line(tail: &[u8]) -> Option<&[u8]> {
@@ -158,8 +151,35 @@ fn last_complete_line(tail: &[u8]) -> Option<&[u8]> {
         .find(|line| !line.iter().all(|b| b.is_ascii_whitespace()))
 }
 
-fn is_hex_hash(value: &str) -> bool {
-    value.len() == 64 && value.bytes().all(|b| b.is_ascii_hexdigit())
+// Startup carries this hash into the next entry. Do not recover from malformed data.
+fn recover_entry_hash(line: &str, path: &Path) -> anyhow::Result<String> {
+    let mut entry: AuditEntry = serde_json::from_str(line)
+        .with_context(|| format!("audit log {} has malformed final entry", path.display()))?;
+
+    if !is_lower_hex_hash(&entry.prev_hash) {
+        anyhow::bail!("audit log {} has invalid final prev_hash", path.display());
+    }
+    if !is_lower_hex_hash(&entry.entry_hash) {
+        anyhow::bail!("audit log {} has invalid final entry_hash", path.display());
+    }
+
+    let recovered = std::mem::take(&mut entry.entry_hash);
+    let expected = hex_sha256(&entry.hash_payload_v1());
+    if recovered != expected {
+        anyhow::bail!(
+            "audit log {} final entry_hash does not match entry",
+            path.display()
+        );
+    }
+
+    Ok(recovered)
+}
+
+fn is_lower_hex_hash(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
 #[cfg(test)]
@@ -186,6 +206,33 @@ mod tests {
             prev_hash: String::new(),
             entry_hash: String::new(),
         }
+    }
+
+    fn signed_entry_line(id: &str, prev_hash: &str) -> (String, String) {
+        let mut entry = entry(id);
+        entry.prev_hash = prev_hash.to_string();
+        entry.entry_hash = hex_sha256(&entry.hash_payload_v1());
+        let hash = entry.entry_hash.clone();
+        (
+            serde_json::to_string(&entry).expect("serialize entry"),
+            hash,
+        )
+    }
+
+    fn write_log(path: &std::path::Path, line: &str) {
+        std::fs::write(path, format!("{line}\n")).expect("write log");
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o640))
+            .expect("set log mode");
+    }
+
+    fn open_log_error(line: &str) -> String {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let log_path = dir.path().join("audit.log");
+        write_log(&log_path, line);
+        AuditLogger::open(&log_path, OwnerPolicy::RootOrCurrent)
+            .err()
+            .expect("open must fail")
+            .to_string()
     }
 
     #[test]
@@ -354,8 +401,7 @@ mod tests {
     async fn test_open_recovers_hash_from_bounded_tail() {
         let dir = tempfile::tempdir().expect("tempdir");
         let log_path = dir.path().join("audit.log");
-        let hash = "b".repeat(64);
-        let line = format!(r#"{{"entry_hash":"{hash}"}}"#);
+        let (line, hash) = signed_entry_line("tail", ZERO_HASH);
         let mut file = std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -381,6 +427,58 @@ mod tests {
             .expect("after line");
         let after: serde_json::Value = serde_json::from_str(after_line).expect("after json");
         assert_eq!(after["prev_hash"], hash);
+    }
+
+    #[test]
+    fn test_open_rejects_malformed_final_entry() {
+        let err = open_log_error("not json");
+        assert!(err.contains("malformed final entry"));
+    }
+
+    #[test]
+    fn test_open_rejects_missing_final_entry_hash() {
+        let mut entry = entry("missing-hash");
+        entry.prev_hash = ZERO_HASH.to_string();
+        let err = open_log_error(&serde_json::to_string(&entry).expect("serialize entry"));
+        assert!(err.contains("malformed final entry"));
+    }
+
+    #[test]
+    fn test_open_rejects_invalid_final_entry_hash() {
+        let mut entry = entry("bad-hash");
+        entry.prev_hash = ZERO_HASH.to_string();
+        entry.entry_hash = "A".repeat(64);
+        let err = open_log_error(&serde_json::to_string(&entry).expect("serialize entry"));
+        assert!(err.contains("invalid final entry_hash"));
+    }
+
+    #[test]
+    fn test_open_rejects_invalid_final_prev_hash() {
+        let mut entry = entry("bad-prev");
+        entry.prev_hash = "A".repeat(64);
+        entry.entry_hash = hex_sha256(&entry.hash_payload_v1());
+        let err = open_log_error(&serde_json::to_string(&entry).expect("serialize entry"));
+        assert!(err.contains("invalid final prev_hash"));
+    }
+
+    #[test]
+    fn test_open_rejects_unknown_final_entry_field() {
+        let (line, _) = signed_entry_line("unknown-field", ZERO_HASH);
+        let mut value: serde_json::Value = serde_json::from_str(&line).expect("entry json");
+        value["extra"] = serde_json::Value::Bool(true);
+
+        let err = open_log_error(&serde_json::to_string(&value).expect("json"));
+        assert!(err.contains("malformed final entry"));
+    }
+
+    #[test]
+    fn test_open_rejects_final_entry_hash_mismatch() {
+        let (line, _) = signed_entry_line("mismatch", ZERO_HASH);
+        let mut value: serde_json::Value = serde_json::from_str(&line).expect("entry json");
+        value["entry_hash"] = serde_json::Value::String("1".repeat(64));
+
+        let err = open_log_error(&serde_json::to_string(&value).expect("json"));
+        assert!(err.contains("entry_hash does not match"));
     }
 
     #[test]
@@ -426,8 +524,8 @@ mod tests {
         assert_eq!(first["prev_hash"], ZERO_HASH);
         assert_eq!(first_hash, hex_sha256(&expected_first.hash_payload_v1()));
         assert_eq!(second["prev_hash"], first_hash);
-        assert!(is_hex_hash(first_hash));
-        assert!(is_hex_hash(
+        assert!(is_lower_hex_hash(first_hash));
+        assert!(is_lower_hex_hash(
             second["entry_hash"].as_str().expect("second hash")
         ));
     }

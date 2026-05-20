@@ -15,6 +15,9 @@ Entries are JSON lines. Each entry has `prev_hash` and `entry_hash`.
 The chain starts with a zero previous hash. Each new entry commits to the previous entry hash and the
 current entry payload.
 
+On startup, OLA verifies the final complete entry hash before carrying it forward. If that entry is
+malformed or its hash does not match, startup fails.
+
 ## What the chain proves
 
 A verifier can detect line edits after a trusted checkpoint.
