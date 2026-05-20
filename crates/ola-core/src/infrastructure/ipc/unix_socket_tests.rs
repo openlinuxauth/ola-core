@@ -51,6 +51,22 @@ fn write_secure(path: &std::path::Path, contents: &str) {
     fs::set_permissions(path, perms).expect("set file perms");
 }
 
+#[test]
+fn prod_mode_rejects_disabled_attestation() {
+    let config = test_config(std::path::PathBuf::from("/tmp/ola.sock"), "prod");
+    let err = validate_attestation_mode(&config).expect_err("prod must require attestation");
+    assert_eq!(
+        err.to_string(),
+        "OLA_REQUIRE_ATTESTATION cannot be disabled in prod mode"
+    );
+}
+
+#[test]
+fn dev_mode_allows_disabled_attestation() {
+    let config = test_config(std::path::PathBuf::from("/tmp/ola.sock"), "dev");
+    validate_attestation_mode(&config).expect("dev may disable attestation");
+}
+
 fn policy(confidence: f32) -> String {
     format!(
         "[[rules]]\nmethod = \"fido2\"\nmin_confidence = {confidence}\nmax_age_secs = 30\nrequire_uid_match = true\n"
