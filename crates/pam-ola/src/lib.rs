@@ -300,6 +300,9 @@ fn parse_argv(argc: c_int, argv: *const *const c_char) -> Result<PamOlaConfig, S
                 return Err(timeout_arg_error().to_string());
             }
             config.timeout_ms = timeout_ms;
+        } else {
+            let name = arg.split_once('=').map_or(arg, |(name, _)| name);
+            return Err(format!("unknown PAM argument: {name}"));
         }
     }
 
@@ -390,15 +393,19 @@ mod tests {
     use std::os::unix::net::UnixListener;
     use std::thread;
 
+    fn parse_args(args: &[&str]) -> Result<PamOlaConfig, String> {
+        let args = args
+            .iter()
+            .map(|arg| CString::new(*arg).unwrap())
+            .collect::<Vec<_>>();
+        let raw = args.iter().map(|arg| arg.as_ptr()).collect::<Vec<_>>();
+        parse_argv(raw.len() as c_int, raw.as_ptr())
+    }
+
     #[test]
     fn argv_overrides_defaults() {
-        let args = [
-            CString::new("socket=/tmp/ola-test.sock").unwrap(),
-            CString::new("method=pin").unwrap(),
-            CString::new("timeout_ms=123").unwrap(),
-        ];
-        let raw: Vec<*const c_char> = args.iter().map(|arg| arg.as_ptr()).collect();
-        let config = parse_argv(raw.len() as c_int, raw.as_ptr()).expect("valid args");
+        let config = parse_args(&["socket=/tmp/ola-test.sock", "method=pin", "timeout_ms=123"])
+            .expect("valid args");
 
         assert_eq!(config.socket_path, "/tmp/ola-test.sock");
         assert_eq!(config.method, "pin");
@@ -427,20 +434,22 @@ mod tests {
 
     #[test]
     fn argv_rejects_invalid_method() {
-        let args = [CString::new("method=two words").unwrap()];
-        let raw: Vec<*const c_char> = args.iter().map(|arg| arg.as_ptr()).collect();
-
-        assert!(parse_argv(raw.len() as c_int, raw.as_ptr()).is_err());
+        assert!(parse_args(&["method=two words"]).is_err());
     }
 
     #[test]
     fn argv_rejects_invalid_timeout() {
         for arg in ["timeout_ms=nope", "timeout_ms=99", "timeout_ms=30001"] {
-            let args = [CString::new(arg).unwrap()];
-            let raw: Vec<*const c_char> = args.iter().map(|arg| arg.as_ptr()).collect();
-
-            assert!(parse_argv(raw.len() as c_int, raw.as_ptr()).is_err());
+            assert!(parse_args(&[arg]).is_err());
         }
+    }
+
+    #[test]
+    fn argv_rejects_unknown_arg() {
+        assert_eq!(
+            parse_args(&["socket_path=/tmp/ola.sock"]).expect_err("unknown arg must fail"),
+            "unknown PAM argument: socket_path"
+        );
     }
 
     #[test]

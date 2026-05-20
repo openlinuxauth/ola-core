@@ -24,7 +24,9 @@ system PAM module directory as `pam_ola.so`, then configure a PAM service with:
 auth required pam_ola.so socket=/run/ola/ola.sock method=fido2 timeout_ms=8000
 ```
 
-`method` uses OLA method-name rules. `timeout_ms` must be between `100` and `30000`.
+`socket`, `method`, and `timeout_ms` are the only accepted module arguments. Unknown arguments make
+the PAM call return an error. `method` uses OLA method-name rules. `timeout_ms` must be between `100`
+and `30000`.
 
 `auth required` is an example, not production guidance. `required` vs `sufficient` is a site policy
 decision.

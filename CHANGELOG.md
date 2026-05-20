@@ -23,6 +23,7 @@ releases exist.
 - Made adapter `timeout_ms` apply to the whole adapter request instead of each I/O step.
 - Randomized PAM bridge request IDs.
 - Rejected invalid PAM bridge `method` and `timeout_ms` arguments.
+- Rejected unknown PAM bridge arguments.
 - Capped the rate limiter UID table.
 - Clarified that the system installer uses production-style paths for a prototype.
 - Tightened policy age-window overflow handling and Python socket-path fallback behavior.
