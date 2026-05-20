@@ -25,6 +25,7 @@ releases exist.
 - Rejected invalid PAM bridge `method` and `timeout_ms` arguments.
 - Rejected unknown PAM bridge arguments.
 - Capped the rate limiter UID table.
+- Required configured adapters to pass one health ping before their methods are listed or used.
 - Clarified that the system installer uses production-style paths for a prototype.
 - Tightened policy age-window overflow handling and Python socket-path fallback behavior.
 
