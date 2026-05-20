@@ -288,7 +288,9 @@ Strings are UTF-8. `confidence` is the lowercase 8-character hex form of `f32::t
 The first entry uses 64 zeroes.
 
 On startup, the daemon opens and checks the audit log before recovering the previous hash. Recovery
-reads a bounded tail of the log and uses the last complete non-empty line.
+reads a bounded tail of the log, parses the last complete non-empty line as an audit entry, verifies
+its hash, and carries that `entry_hash` forward. If the final complete entry is malformed or its hash
+does not match, recovery fails.
 
 On log reopen after `SIGHUP`, the daemon keeps its in-memory previous hash and opens the replacement
 log safely.

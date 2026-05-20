@@ -19,6 +19,7 @@ releases exist.
 - Made `SIGHUP` keep the old policy and allowlist if either reload fails.
 - Made audit reopen wait for in-flight writes before carrying the hash forward.
 - Hardened audit log recovery so startup reads the previous hash only after safe file checks.
+- Made audit recovery reject malformed or hash-mismatched final audit entries.
 - Made adapter `timeout_ms` apply to the whole adapter request instead of each I/O step.
 - Randomized PAM bridge request IDs.
 - Rejected invalid PAM bridge `method` and `timeout_ms` arguments.
