@@ -104,7 +104,15 @@ impl ReloadableState {
     }
 }
 
+fn validate_attestation_mode(config: &Config) -> anyhow::Result<()> {
+    if config.is_prod_mode() && !config.require_attestation {
+        anyhow::bail!("OLA_REQUIRE_ATTESTATION cannot be disabled in prod mode");
+    }
+    Ok(())
+}
+
 pub async fn run_server(config: Arc<Config>) -> anyhow::Result<()> {
+    validate_attestation_mode(&config)?;
     let owner_policy = secure_owner_policy(&config)?;
 
     let rate_limiter = Arc::new(RateLimiter::new());
@@ -118,9 +126,6 @@ pub async fn run_server(config: Arc<Config>) -> anyhow::Result<()> {
         &config,
         owner_policy,
     )?)));
-    if config.is_prod_mode() && !config.require_attestation {
-        anyhow::bail!("OLA_REQUIRE_ATTESTATION cannot be disabled in prod mode");
-    }
     let attester = Arc::new(AttestationVerifier::load_from_dir_with_owner(
         &config.adapter_keys_dir,
         owner_policy,
