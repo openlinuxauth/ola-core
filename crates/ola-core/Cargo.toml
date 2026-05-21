@@ -30,7 +30,7 @@ arc-swap = "1.9.1"
 caps = "0.5"
 seccompiler = "0.5"
 prctl = "1.0"
-thiserror = "1.0"
+thiserror = "2.0"
 subtle = "2.5"
 
 [features]
