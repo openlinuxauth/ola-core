@@ -26,7 +26,7 @@ uuid = { version = "1", features = ["v4"] }
 toml = "0.8"
 uzers = "0.11"
 listenfd = "1.0"
-arc-swap = "1.7.1"
+arc-swap = "1.9.1"
 caps = "0.5"
 seccompiler = "0.4"
 prctl = "1.0"
