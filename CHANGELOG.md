@@ -20,6 +20,7 @@ releases exist.
 - Made audit reopen wait for in-flight writes before carrying the hash forward.
 - Hardened audit log recovery so startup reads the previous hash only after safe file checks.
 - Made audit recovery reject malformed or hash-mismatched final audit entries.
+- Added an audit verifier for the existing local hash chain.
 - Removed unused `fsync` from the daemon seccomp allowlist.
 - Made adapter `timeout_ms` apply to the whole adapter request instead of each I/O step.
 - Randomized PAM bridge request IDs.

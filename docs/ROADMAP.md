@@ -9,13 +9,13 @@ not trusted for production. Planned means it is not implemented.
 - Implemented: v1 client and adapter protocol.
 - Implemented: demo adapter proves adapter attestation and dispatch.
 - Implemented: local audit hash chain.
+- Implemented: audit verifier for the existing hash chain.
 - Experimental: PAM bridge demo path.
 
 ## Next proof
 
 - Planned: real FIDO2 adapter using `libfido2`.
 - Planned: enrollment and credential mapping for FIDO2.
-- Planned: audit verifier for the existing hash chain.
 - Planned: first audit hash export or checkpoint path.
 - Planned: `ola-verify` CLI as the first direct non-PAM client.
 - Planned: action-aware protocol v2 design.

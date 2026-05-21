@@ -52,6 +52,7 @@ This repository is an experimental public-release candidate.
 | Adapter protocol | Implemented | Version 1 exists and is documented. Treat it as stable for this repo's demo slice, not as a standards-track spec yet. |
 | Demo FIDO2-shaped adapter | Demo only | Hardware-free adapter for tests and demos. It is not a real authenticator. |
 | PAM bridge | Experimental | Thin `pam_ola.so` bridge. Useful for the demo path; not ready for host login stacks. |
+| Audit verifier | Implemented | Checks the existing local audit hash chain. It is not root-resistant storage. |
 | Real FIDO2 adapter | Planned | Planned around the adapter protocol and `libfido2`. |
 | `ola-verify` CLI | Planned | First direct non-PAM client. |
 | Action-aware protocol | Planned | Needed for login, sudo, unlock, enrollment, recovery, and admin changes. |

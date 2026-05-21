@@ -15,3 +15,10 @@ pub(crate) fn encode_hex(bytes: &[u8]) -> String {
 pub(crate) fn hex_sha256(bytes: &[u8]) -> String {
     encode_hex(&Sha256::digest(bytes))
 }
+
+pub(crate) fn is_lower_hex_hash(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}

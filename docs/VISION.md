@@ -121,9 +121,8 @@ policy, structured audit, and offline fallback.
 
 Support should turn the prototype into reviewed, usable infrastructure.
 
-The important milestones are real FIDO2, enrollment, audit verification and checkpoints, a non-PAM
-client, action-aware policy, conformance tests, PAM hardening, packaging, release signing, and external
-review.
+The important milestones are real FIDO2, enrollment, audit checkpoints, a non-PAM client,
+action-aware policy, conformance tests, PAM hardening, packaging, release signing, and external review.
 
 The vision is large. Each public release stays narrow, documented, and verifiable.
 

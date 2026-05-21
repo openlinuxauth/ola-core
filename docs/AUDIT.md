@@ -1,6 +1,6 @@
 # Audit
 
-Status: local hash chaining is implemented. Root-resistant audit is planned.
+Status: local hash chaining and local verification are implemented. Root-resistant audit is planned.
 
 Audit is part of the decision path.
 
@@ -17,6 +17,8 @@ current entry payload.
 
 On startup, OLA verifies the final complete entry hash before carrying it forward. If that entry is
 malformed or its hash does not match, startup fails.
+
+`ola-core audit verify <path>` verifies the full local chain.
 
 ## What the chain proves
 
@@ -39,8 +41,8 @@ It gives local tamper evidence, not root-resistant storage.
 
 ## Next step
 
-The next audit step is an external verifier and one checkpoint or export path: remote checkpointing,
-remote signing, TPM anchoring, or log forwarding.
+The next audit step is one checkpoint or export path: remote checkpointing, remote signing, TPM
+anchoring, or log forwarding.
 
 Do this before treating a second client as strong proof. A second client matters more when its records
 can be checked outside the host.
