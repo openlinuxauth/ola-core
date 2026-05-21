@@ -42,7 +42,7 @@ It sends `verify_once` to `ola-core` and maps the answer to a PAM return code.
 Planned, in priority order:
 
 - Real FIDO2 adapter using `libfido2`
-- Audit verifier and hash export
+- Audit hash export or checkpoint path
 - Direct non-PAM client such as `ola-verify` or sudo/sudo-rs integration
 - Action-aware protocol and policy
 - PAM hardening and real sudo/login/screen-lock test matrix
@@ -161,10 +161,10 @@ hash-chain fields.
 
 Some requests fail before adapter evidence exists. Those entries still keep the same audit shape.
 
-The log has a local hash chain. A verifier can detect line edits, but OLA does not yet make the log
-safe from root.
+The log has a local hash chain. The audit verifier can detect line edits, but OLA does not yet make
+the log safe from root.
 
-The next audit step is an external verifier and a way to ship or checkpoint hashes outside the host.
+The next audit step is a way to ship or checkpoint hashes outside the host.
 
 If the write or sync fails, the daemon returns an internal error instead of returning allow or deny.
 

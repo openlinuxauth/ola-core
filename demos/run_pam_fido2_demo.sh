@@ -111,3 +111,6 @@ printf 'auth required pam_ola.so socket=%s method=fido2 timeout_ms=8000\n' "$SOC
 
 printf '== Audit log ==\n'
 cat "$AUDIT_LOG"
+
+printf '== Audit verify ==\n'
+"$TARGET_DIR/debug/ola-core" audit verify "$AUDIT_LOG"

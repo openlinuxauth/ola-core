@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::infrastructure::audit::entry::AuditEntry;
-use crate::infrastructure::audit::hex::hex_sha256;
+use crate::infrastructure::audit::hex::{hex_sha256, is_lower_hex_hash};
+use crate::infrastructure::audit::ZERO_HASH;
 use crate::security::fs::{open_secure_append, OwnerPolicy};
 use anyhow::Context;
 use std::fs::File;
@@ -9,7 +10,6 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-const ZERO_HASH: &str = "0000000000000000000000000000000000000000000000000000000000000000";
 const AUDIT_RECOVERY_WINDOW_BYTES: u64 = 1024 * 1024;
 
 /// Append-mode audit log. Allow or deny returns only after its entry lands.
@@ -173,13 +173,6 @@ fn recover_entry_hash(line: &str, path: &Path) -> anyhow::Result<String> {
     }
 
     Ok(recovered)
-}
-
-fn is_lower_hex_hash(value: &str) -> bool {
-    value.len() == 64
-        && value
-            .bytes()
-            .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
 #[cfg(test)]
